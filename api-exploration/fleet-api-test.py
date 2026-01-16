@@ -395,16 +395,18 @@ Select an endpoint to query:
 def _(mo):
     endpoint_select = mo.ui.dropdown(
         options={
+            "Get Current User": "/api/v1/fleet/me",
             "Get Hosts": "/api/v1/fleet/hosts",
             "Get Teams": "/api/v1/fleet/teams",
-            "Get Policies": "/api/v1/fleet/policies",
+            "Get Global Policies": "/api/v1/fleet/global/policies",
             "Get Queries": "/api/v1/fleet/queries",
-            "Get Software": "/api/v1/fleet/software/titles",
+            "Get Software Titles": "/api/v1/fleet/software/titles",
             "Get Labels": "/api/v1/fleet/labels",
             "Get Config": "/api/v1/fleet/config",
             "Get Activities": "/api/v1/fleet/activities",
+            "Get Host Count": "/api/v1/fleet/host_summary",
         },
-        value="/api/v1/fleet/hosts",
+        value="Get Current User",
         label="Select Endpoint",
     )
 
@@ -575,8 +577,10 @@ def _(mo):
 | `/api/v1/fleet/me` | Current authenticated user |
 | `/api/v1/fleet/hosts` | List all hosts |
 | `/api/v1/fleet/hosts?per_page=10` | List hosts with pagination |
+| `/api/v1/fleet/host_summary` | Get host counts and summary |
 | `/api/v1/fleet/teams` | List all teams |
-| `/api/v1/fleet/policies` | List all policies |
+| `/api/v1/fleet/global/policies` | List global policies |
+| `/api/v1/fleet/teams/{id}/policies` | List team policies |
 | `/api/v1/fleet/queries` | List all queries |
 | `/api/v1/fleet/software/titles` | List software inventory |
 | `/api/v1/fleet/labels` | List all labels |
