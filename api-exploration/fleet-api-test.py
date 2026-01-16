@@ -19,14 +19,18 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
+    import base64
     import json
     import os
+    import plistlib
+    import subprocess
     import uuid
     import httpx
     import pandas as pd
     import marimo as mo
+    from pathlib import Path
 
-    return mo, json, os, uuid, httpx, pd
+    return mo, base64, json, os, plistlib, subprocess, uuid, httpx, pd, Path
 
 
 @app.cell
@@ -274,30 +278,97 @@ This notebook allows you to test your Fleet API connection and explore various e
 
 
 @app.cell
-def _(mo):
+def _(os, subprocess, Path):
+    def resolve_op_reference(value: str) -> str:
+        """Resolve 1Password CLI reference (op://vault/item/field) to actual value."""
+        if not value.startswith("op://"):
+            return value
+        try:
+            result = subprocess.run(
+                ["op", "read", value],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            else:
+                return ""  # Failed to read, return empty
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return ""  # op CLI not available or timed out
+
+    def load_env_file(env_path: Path) -> dict:
+        """Load environment variables from a .env file."""
+        env_vars = {}
+        if not env_path.exists():
+            return env_vars
+        try:
+            with open(env_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        key, _, value = line.partition("=")
+                        key = key.strip()
+                        value = value.strip().strip('"').strip("'")
+                        env_vars[key] = value
+        except Exception:
+            pass
+        return env_vars
+
+    # Try to load from .env file in the notebook directory
+    _env_path = Path(__file__).parent / ".env" if "__file__" in dir() else Path(".env")
+    _env_vars = load_env_file(_env_path)
+
+    # Get values from env file or environment variables
+    _fleet_url_env = _env_vars.get("FLEET_URL", os.environ.get("FLEET_URL", ""))
+    _fleet_token_env = _env_vars.get("FLEET_API_TOKEN", os.environ.get("FLEET_API_TOKEN", ""))
+
+    # Resolve 1Password references
+    env_fleet_url = resolve_op_reference(_fleet_url_env)
+    env_fleet_token = resolve_op_reference(_fleet_token_env)
+
+    return resolve_op_reference, load_env_file, env_fleet_url, env_fleet_token
+
+
+@app.cell
+def _(mo, env_fleet_url, env_fleet_token):
+    _env_loaded = bool(env_fleet_url or env_fleet_token)
+
     fleet_url_input = mo.ui.text(
-        placeholder="https://fleet-xxxx.onrender.com",
+        placeholder="https://fleet.example.com",
         label="Fleet Instance URL",
-        value="",
+        value=env_fleet_url,
         full_width=True,
     )
 
     api_token_input = mo.ui.text(
         placeholder="Your Fleet API Token",
         label="Fleet API Token",
-        value="",
+        value=env_fleet_token,
         kind="password",
         full_width=True,
     )
 
+    _env_note = ""
+    if _env_loaded:
+        _loaded_parts = []
+        if env_fleet_url:
+            _loaded_parts.append("URL")
+        if env_fleet_token:
+            _loaded_parts.append("Token")
+        _env_note = f'\n\n<div class="fleet-tip">Loaded {" and ".join(_loaded_parts)} from <code>.env</code> file or environment variables.</div>'
+
     mo.md(f"""
 ## Configuration
 
-Enter your Fleet instance details:
+Enter your Fleet instance details (or use `.env` file with `FLEET_URL` and `FLEET_API_TOKEN`):
 
 {fleet_url_input}
 
 {api_token_input}
+{_env_note}
 """)
 
     return fleet_url_input, api_token_input
@@ -546,20 +617,37 @@ def _(mo, httpx, json, fleet_url_input, api_token_input, custom_endpoint_input, 
 
         if _response.status_code == 200:
             _data = _response.json()
-            _formatted = json.dumps(_data, indent=2)
+            _full_json = json.dumps(_data, indent=2)
+            _formatted = _full_json
+            _truncated = False
 
             if len(_formatted) > 5000:
-                _formatted = _formatted[:5000] + "\n\n... (truncated)"
+                _formatted = _formatted[:5000] + "\n\n... (truncated - download full response below)"
+                _truncated = True
 
-            _result = mo.md(f"""
+            # Create safe filename from endpoint
+            _safe_filename = _endpoint.replace("/", "_").replace("?", "_").strip("_")[:50]
+            _download_btn = mo.download(
+                data=_full_json.encode("utf-8"),
+                filename=f"fleet-api-{_safe_filename}.json",
+                mimetype="application/json",
+                label="Download Full Response",
+            )
+
+            _result = mo.vstack([
+                mo.md(f"""
 ### Response from `{_endpoint}`
 
 **Status**: {_response.status_code} OK
-
+"""),
+                _download_btn if _truncated else mo.md(""),
+                mo.md(f"""
 ```json
 {_formatted}
 ```
-""")
+"""),
+                _download_btn,
+            ])
         else:
             _result = fleet_error(f"API returned status {_response.status_code}: {_response.text[:500]}")
 
@@ -727,6 +815,440 @@ def _(mo, fleet, label_id_input, delete_btn, fleet_success, fleet_error):
         _result = fleet_success(f"Label {label_id_input.value} deleted!")
     else:
         _result = fleet_error(f"Failed to delete (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
+## MDM Commands
+
+Run MDM commands on enrolled macOS hosts. These commands are **read-only queries** that retrieve device information without making any changes:
+
+| Command | Description |
+|---------|-------------|
+| DeviceInformation | Query 60+ device details (hardware, OS, network, security) |
+| ProfileList | List installed configuration profiles |
+| InstalledApplicationList | List installed applications |
+| SecurityInfo | Security-related information |
+| CertificateList | List installed certificates |
+""")
+
+
+@app.cell
+def _(mo, uuid, base64):
+    # MDM command plist templates (safe, read-only queries)
+    # CommandUUID placeholder will be replaced with unique UUID at runtime
+    MDM_COMMAND_TEMPLATES = {
+        "DeviceInformation": '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Command</key>
+    <dict>
+        <key>RequestType</key>
+        <string>DeviceInformation</string>
+        <key>Queries</key>
+        <array>
+            <string>DeviceName</string>
+            <string>SerialNumber</string>
+            <string>Model</string>
+            <string>ModelName</string>
+            <string>OSVersion</string>
+            <string>BuildVersion</string>
+            <string>DeviceCapacity</string>
+            <string>AvailableDeviceCapacity</string>
+            <string>WiFiMAC</string>
+            <string>BluetoothMAC</string>
+            <string>IsSupervised</string>
+            <string>IsActivationLockEnabled</string>
+            <string>BatteryLevel</string>
+        </array>
+    </dict>
+    <key>CommandUUID</key>
+    <string>{{CMD_UUID}}</string>
+</dict>
+</plist>''',
+        "ProfileList": '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Command</key>
+    <dict>
+        <key>ManagedOnly</key>
+        <false/>
+        <key>RequestType</key>
+        <string>ProfileList</string>
+    </dict>
+    <key>CommandUUID</key>
+    <string>{{CMD_UUID}}</string>
+</dict>
+</plist>''',
+        "InstalledApplicationList": '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Command</key>
+    <dict>
+        <key>ManagedAppsOnly</key>
+        <false/>
+        <key>RequestType</key>
+        <string>InstalledApplicationList</string>
+    </dict>
+    <key>CommandUUID</key>
+    <string>{{CMD_UUID}}</string>
+</dict>
+</plist>''',
+        "SecurityInfo": '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Command</key>
+    <dict>
+        <key>RequestType</key>
+        <string>SecurityInfo</string>
+    </dict>
+    <key>CommandUUID</key>
+    <string>{{CMD_UUID}}</string>
+</dict>
+</plist>''',
+        "CertificateList": '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Command</key>
+    <dict>
+        <key>ManagedOnly</key>
+        <false/>
+        <key>RequestType</key>
+        <string>CertificateList</string>
+    </dict>
+    <key>CommandUUID</key>
+    <string>{{CMD_UUID}}</string>
+</dict>
+</plist>''',
+    }
+
+    def build_mdm_command(command_name: str) -> str:
+        """Build a base64-encoded MDM command with a unique UUID."""
+        template = MDM_COMMAND_TEMPLATES.get(command_name, "")
+        if not template:
+            return ""
+        # Replace placeholder with unique UUID
+        cmd_uuid = str(uuid.uuid4()).upper()
+        plist = template.replace("{{CMD_UUID}}", cmd_uuid)
+        return base64.b64encode(plist.encode('utf-8')).decode('utf-8')
+
+    return MDM_COMMAND_TEMPLATES, build_mdm_command
+
+
+@app.cell
+def _(mo):
+    fetch_mdm_hosts_btn = mo.ui.run_button(label="Fetch MDM-Enabled Hosts")
+    fetch_mdm_hosts_btn
+
+    return (fetch_mdm_hosts_btn,)
+
+
+@app.cell
+def _(mo, fleet, fetch_mdm_hosts_btn):
+    # Default empty state
+    mdm_host_options = {}
+    _status_msg = "Click **Fetch MDM-Enabled Hosts** to load available hosts."
+
+    if fetch_mdm_hosts_btn.value:
+        _status, _data = fleet("GET", "/api/v1/fleet/hosts?per_page=100")
+
+        if _status == 200:
+            _hosts = _data.get("hosts", [])
+            for _h in _hosts:
+                _mdm = _h.get("mdm") or {}
+                _enrollment = _mdm.get("enrollment_status") or ""
+                _mdm_name = _mdm.get("name") or ""
+                # Only include hosts enrolled in Fleet's MDM
+                if "On" in _enrollment and _mdm_name == "Fleet":
+                    _display = f"{_h.get('display_name') or _h.get('hostname') or 'Unknown'} ({(_h.get('uuid') or '')[:8]}...)"
+                    mdm_host_options[_display] = _h.get("uuid")
+
+            if mdm_host_options:
+                _status_msg = f"**Found {len(mdm_host_options)} MDM-capable host(s)**"
+            else:
+                _status_msg = f"**No MDM-capable hosts found.** Found {len(_hosts)} total hosts, but none enrolled in Fleet's MDM with status On."
+        else:
+            _status_msg = f"**Error:** Failed to fetch hosts - {_data}"
+
+    mo.md(_status_msg)
+
+    return (mdm_host_options,)
+
+
+@app.cell
+def _(mo, mdm_host_options, MDM_COMMAND_TEMPLATES):
+    # Custom command XML template
+    CUSTOM_COMMAND_TEMPLATE = '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Command</key>
+    <dict>
+        <key>RequestType</key>
+        <string>DeviceInformation</string>
+        <key>Queries</key>
+        <array>
+            <string>DeviceName</string>
+            <string>SerialNumber</string>
+        </array>
+    </dict>
+</dict>
+</plist>'''
+
+    # Host selection dropdown - populated from fetched hosts
+    mdm_host_dropdown = mo.ui.dropdown(
+        options=mdm_host_options if mdm_host_options else {},
+        label="Select Host",
+        value=None,
+    )
+
+    # Manual UUID input as fallback
+    mdm_host_uuid_input = mo.ui.text(
+        placeholder="Or enter UUID manually",
+        label="Manual Host UUID",
+        full_width=True,
+    )
+
+    # Preset commands dropdown
+    mdm_command_dropdown = mo.ui.dropdown(
+        options=list(MDM_COMMAND_TEMPLATES.keys()),
+        value="DeviceInformation",
+        label="Command Preset",
+    )
+
+    run_mdm_command_btn = mo.ui.run_button(label="Run Preset Command")
+
+    # Toggle for custom command
+    use_custom_command = mo.ui.checkbox(label="Use custom command instead")
+
+    # Custom command text area
+    mdm_custom_command = mo.ui.text_area(
+        placeholder="Enter custom MDM command XML (CommandUUID will be auto-generated)",
+        label="Custom Command XML",
+        value=CUSTOM_COMMAND_TEMPLATE,
+        full_width=True,
+        rows=12,
+    )
+
+    run_custom_command_btn = mo.ui.run_button(label="Run Custom Command")
+
+    mo.vstack([
+        mo.md("**Target Host**"),
+        mdm_host_dropdown,
+        mdm_host_uuid_input,
+        mo.md("---"),
+        mo.md("**Preset Commands**"),
+        mo.hstack([mdm_command_dropdown, run_mdm_command_btn], justify="start", gap=1),
+        mo.md("---"),
+        mo.md("**Custom Command**"),
+        mdm_custom_command,
+        mo.hstack([run_custom_command_btn], justify="start"),
+    ])
+
+    return mdm_host_dropdown, mdm_host_uuid_input, mdm_command_dropdown, mdm_custom_command, run_mdm_command_btn, run_custom_command_btn
+
+
+@app.cell
+def _(mo, fleet, build_mdm_command, mdm_host_dropdown, mdm_host_uuid_input, mdm_command_dropdown, run_mdm_command_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not run_mdm_command_btn.value)
+
+    # Use dropdown selection, fall back to manual input
+    _host_uuid = mdm_host_dropdown.value if mdm_host_dropdown.value else mdm_host_uuid_input.value.strip()
+
+    mo.stop(
+        not _host_uuid,
+        fleet_tip("Select a host from the dropdown above, or enter a Host UUID manually.")
+    )
+
+    _command_name = mdm_command_dropdown.value
+    _command_base64 = build_mdm_command(_command_name)
+
+    _payload = {
+        "command": _command_base64,
+        "host_uuids": [_host_uuid],
+    }
+
+    _status, _data = fleet("POST", "/api/v1/fleet/commands/run", json_data=_payload)
+    mdm_command_uuid = _data.get("command_uuid", "") if _status in (200, 202) else ""
+
+    if _status == 200 or _status == 202:
+        _output = mo.vstack([
+            fleet_success(f"Command <strong>{_command_name}</strong> sent successfully!"),
+            mo.callout(
+                mo.md(f"**Command UUID:** `{mdm_command_uuid}`"),
+                kind="success"
+            ),
+            mo.md(f"""
+**Target Host**: `{_host_uuid}`
+
+**Request Type**: `{_data.get('request_type', 'N/A')}`
+
+Copy the Command UUID above and paste it in "Get Results" below.
+"""),
+        ])
+    else:
+        _output = fleet_error(f"Failed to send command (status {_status}): {_data}")
+
+    _output
+
+    return (mdm_command_uuid,)
+
+
+@app.cell
+def _(mo, fleet, uuid, base64, mdm_host_dropdown, mdm_host_uuid_input, mdm_custom_command, run_custom_command_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not run_custom_command_btn.value)
+
+    # Use dropdown selection, fall back to manual input
+    _host_uuid = mdm_host_dropdown.value if mdm_host_dropdown.value else mdm_host_uuid_input.value.strip()
+
+    mo.stop(
+        not _host_uuid,
+        fleet_tip("Select a host from the dropdown above, or enter a Host UUID manually.")
+    )
+
+    # Build custom command with auto-generated UUID
+    _custom_xml = mdm_custom_command.value
+    _cmd_uuid = str(uuid.uuid4()).upper()
+
+    # Insert CommandUUID before closing </dict></plist> if not already present
+    if "<key>CommandUUID</key>" not in _custom_xml:
+        _custom_xml = _custom_xml.replace(
+            "</dict>\n</plist>",
+            f"    <key>CommandUUID</key>\n    <string>{_cmd_uuid}</string>\n</dict>\n</plist>"
+        )
+
+    _command_base64 = base64.b64encode(_custom_xml.encode('utf-8')).decode('utf-8')
+
+    _payload = {
+        "command": _command_base64,
+        "host_uuids": [_host_uuid],
+    }
+
+    _status, _data = fleet("POST", "/api/v1/fleet/commands/run", json_data=_payload)
+    custom_command_uuid = _data.get("command_uuid", "") if _status in (200, 202) else ""
+
+    if _status == 200 or _status == 202:
+        _output = mo.vstack([
+            fleet_success(f"Custom command sent successfully!"),
+            mo.callout(
+                mo.md(f"**Command UUID:** `{custom_command_uuid}`"),
+                kind="success"
+            ),
+            mo.md(f"""
+**Target Host**: `{_host_uuid}`
+
+**Request Type**: `{_data.get('request_type', 'N/A')}`
+
+Copy the Command UUID above and paste it in "Get Results" below.
+"""),
+        ])
+    else:
+        _output = fleet_error(f"Failed to send custom command (status {_status}): {_data}")
+
+    _output
+
+    return (custom_command_uuid,)
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Get Command Results
+
+Enter a command UUID to retrieve the results:
+""")
+
+
+@app.cell
+def _(mo):
+    mdm_result_uuid_input = mo.ui.text(
+        placeholder="Command UUID",
+        label="Command UUID",
+        full_width=True,
+    )
+
+    get_mdm_results_btn = mo.ui.run_button(label="Get Results")
+
+    mo.vstack([
+        mdm_result_uuid_input,
+        mo.hstack([get_mdm_results_btn], justify="start"),
+    ])
+
+    return mdm_result_uuid_input, get_mdm_results_btn
+
+
+@app.cell
+def _(mo, json, base64, plistlib, fleet, mdm_result_uuid_input, get_mdm_results_btn, fleet_success, fleet_error, fleet_tip):
+    def decode_mdm_result(result_b64: str) -> dict:
+        """Decode base64-encoded plist result to dict."""
+        try:
+            plist_bytes = base64.b64decode(result_b64)
+            return plistlib.loads(plist_bytes)
+        except Exception as e:
+            return {"decode_error": str(e), "raw_base64": result_b64[:100] + "..."}
+
+    mo.stop(not get_mdm_results_btn.value)
+
+    mo.stop(
+        not mdm_result_uuid_input.value,
+        fleet_tip("Enter a Command UUID to retrieve results.")
+    )
+
+    _cmd_uuid = mdm_result_uuid_input.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/commands/results?command_uuid={_cmd_uuid}")
+    _result = None
+
+    if _status == 200:
+        _results = _data.get("results", [])
+        if _results:
+            # Decode base64 plist results to JSON
+            _decoded_results = []
+            for _r in _results:
+                _decoded = dict(_r)  # Copy the result dict
+                if "result" in _decoded and _decoded["result"]:
+                    _decoded["result"] = decode_mdm_result(_decoded["result"])
+                _decoded_results.append(_decoded)
+
+            _full_json = json.dumps(_decoded_results, indent=2, default=str)
+            _formatted = _full_json
+            _truncated = False
+            if len(_formatted) > 8000:
+                _formatted = _formatted[:8000] + "\n\n... (truncated - download full results below)"
+                _truncated = True
+            _download_btn = mo.download(
+                data=_full_json.encode("utf-8"),
+                filename=f"mdm-results-{_cmd_uuid}.json",
+                mimetype="application/json",
+                label="Download Full Results",
+            )
+            _result = mo.vstack([
+                fleet_success(f"Results retrieved for command <code>{_cmd_uuid}</code>"),
+                _download_btn if _truncated else mo.md(""),
+                mo.md(f"""
+```json
+{_formatted}
+```
+"""),
+                _download_btn,
+            ])
+        else:
+            _result = mo.md(f"""
+**No results yet** for command `{_cmd_uuid}`
+
+The device may not have responded yet. MDM commands are asynchronous - the device must be online and check in to receive and respond to commands.
+""")
+    else:
+        _result = fleet_error(f"Failed to get results (status {_status}): {_data}")
 
     _result
 
