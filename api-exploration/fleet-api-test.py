@@ -4,6 +4,7 @@
 # dependencies = [
 #     "marimo",
 #     "httpx",
+#     "pandas",
 # ]
 # description = """
 # Fleet API Test Notebook - Test and explore your Fleet instance API endpoints.
@@ -20,10 +21,12 @@ app = marimo.App(width="medium")
 def _():
     import json
     import os
+    import uuid
     import httpx
+    import pandas as pd
     import marimo as mo
 
-    return mo, json, os, httpx
+    return mo, json, os, uuid, httpx, pd
 
 
 @app.cell
@@ -396,15 +399,18 @@ def _(mo):
     endpoint_select = mo.ui.dropdown(
         options={
             "Get Current User": "/api/v1/fleet/me",
+            "Get Version": "/api/v1/fleet/version",
+            "Get Config": "/api/v1/fleet/config",
             "Get Hosts": "/api/v1/fleet/hosts",
+            "Get Host Count": "/api/v1/fleet/hosts/count",
             "Get Teams": "/api/v1/fleet/teams",
             "Get Global Policies": "/api/v1/fleet/global/policies",
+            "Get Global Schedule": "/api/v1/fleet/global/schedule",
             "Get Queries": "/api/v1/fleet/queries",
-            "Get Software Titles": "/api/v1/fleet/software/titles",
+            "Get Software": "/api/v1/fleet/software",
             "Get Labels": "/api/v1/fleet/labels",
-            "Get Config": "/api/v1/fleet/config",
             "Get Activities": "/api/v1/fleet/activities",
-            "Get Host Count": "/api/v1/fleet/host_summary",
+            "Get Enroll Secrets": "/api/v1/fleet/spec/enroll_secret",
         },
         value="Get Current User",
         label="Select Endpoint",
@@ -570,22 +576,189 @@ def _(mo):
     mo.md("""
 ---
 
+## Labels CRUD Operations
+
+Test create, read, and delete operations on Fleet labels:
+""")
+
+
+@app.cell
+def _(httpx, fleet_url_input, api_token_input):
+    # Reusable Fleet API helper function
+    def fleet(method: str, endpoint: str, json_data: dict = None):
+        """Make a request to the Fleet API.
+
+        Returns: (status_code, response_data)
+        """
+        url = fleet_url_input.value.rstrip("/")
+        token = api_token_input.value
+
+        if not url or not token:
+            return None, {"error": "Missing URL or token"}
+
+        headers = {"Authorization": f"Bearer {token}"}
+        full_url = f"{url}{endpoint}"
+
+        try:
+            if method.upper() == "GET":
+                response = httpx.get(full_url, headers=headers, timeout=15.0)
+            elif method.upper() == "POST":
+                response = httpx.post(full_url, headers=headers, json=json_data, timeout=15.0)
+            elif method.upper() == "DELETE":
+                response = httpx.delete(full_url, headers=headers, timeout=15.0)
+            elif method.upper() == "PATCH":
+                response = httpx.patch(full_url, headers=headers, json=json_data, timeout=15.0)
+            else:
+                return None, {"error": f"Unsupported method: {method}"}
+
+            try:
+                data = response.json()
+            except Exception:
+                data = {"raw": response.text}
+
+            return response.status_code, data
+        except Exception as e:
+            return None, {"error": str(e)}
+
+    LABEL_PREFIX = "test_label_"
+
+    return fleet, LABEL_PREFIX
+
+
+@app.cell
+def _(mo):
+    list_labels_btn = mo.ui.run_button(label="List Labels")
+    create_label_btn = mo.ui.run_button(label="Create Test Label")
+
+    mo.hstack([list_labels_btn, create_label_btn], justify="start", gap=1)
+    return list_labels_btn, create_label_btn
+
+
+@app.cell
+def _(mo, pd, fleet, list_labels_btn, fleet_error):
+    mo.stop(not list_labels_btn.value)
+
+    _status, _data = fleet("GET", "/api/v1/fleet/labels")
+    _result = None
+
+    if _status != 200:
+        _result = fleet_error(f"Failed to list labels: {_data}")
+    else:
+        _labels = _data.get("labels", [])
+        if _labels:
+            _df = pd.DataFrame(_labels)[["id", "name", "label_type", "platform", "count"]]
+            _result = mo.vstack([
+                mo.md(f"**Labels** ({len(_labels)} total)"),
+                mo.ui.table(_df, selection=None),
+            ])
+        else:
+            _result = mo.md("*No labels found.*")
+
+    _result
+
+
+@app.cell
+def _(mo, uuid, fleet, create_label_btn, LABEL_PREFIX, fleet_success, fleet_error):
+    mo.stop(not create_label_btn.value)
+
+    created_label_name = f"{LABEL_PREFIX}{uuid.uuid4().hex[:8]}"
+    _payload = {
+        "name": created_label_name,
+        "query": "SELECT 1 FROM os_version WHERE platform = 'darwin';",
+        "platform": "darwin",
+    }
+
+    _status, _data = fleet("POST", "/api/v1/fleet/labels", json_data=_payload)
+    created_label_id = None
+    _result = None
+
+    if _status == 200 or _status == 201:
+        _created_label = _data.get("label", {})
+        created_label_id = _created_label.get("id")
+        _result = fleet_success(f"Created label: **{created_label_name}** (ID: {created_label_id})")
+    else:
+        _result = fleet_error(f"Failed to create label (status {_status}): {_data}")
+
+    _result
+
+    return created_label_name, created_label_id
+
+
+@app.cell
+def _(mo):
+    label_id_input = mo.ui.text(
+        placeholder="e.g. 21",
+        label="Label ID",
+    )
+    verify_btn = mo.ui.run_button(label="Verify")
+    delete_btn = mo.ui.run_button(label="Delete")
+
+    mo.hstack([label_id_input, verify_btn, delete_btn], justify="start", gap=1)
+    return label_id_input, verify_btn, delete_btn
+
+
+@app.cell
+def _(mo, json, fleet, label_id_input, verify_btn, fleet_success, fleet_error):
+    mo.stop(not verify_btn.value or not label_id_input.value)
+
+    _status, _data = fleet("GET", f"/api/v1/fleet/labels/{label_id_input.value}")
+    _result = None
+
+    if _status == 200:
+        _label = _data.get("label", _data)
+        _result = mo.vstack([
+            fleet_success("Label found!"),
+            mo.md(f"```json\n{json.dumps(_label, indent=2)}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Label not found (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, fleet, label_id_input, delete_btn, fleet_success, fleet_error):
+    mo.stop(not delete_btn.value or not label_id_input.value)
+
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/labels/id/{label_id_input.value}")
+    _result = None
+
+    if _status == 200:
+        _result = fleet_success(f"Label {label_id_input.value} deleted!")
+    else:
+        _result = fleet_error(f"Failed to delete (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
 ## Common API Endpoints Reference
 
 | Endpoint | Description |
 |----------|-------------|
 | `/api/v1/fleet/me` | Current authenticated user |
+| `/api/v1/fleet/version` | Fleet server version |
+| `/api/v1/fleet/config` | Get Fleet configuration |
 | `/api/v1/fleet/hosts` | List all hosts |
-| `/api/v1/fleet/hosts?per_page=10` | List hosts with pagination |
-| `/api/v1/fleet/host_summary` | Get host counts and summary |
+| `/api/v1/fleet/hosts/count` | Get host count |
+| `/api/v1/fleet/hosts/{id}` | Get specific host |
 | `/api/v1/fleet/teams` | List all teams |
+| `/api/v1/fleet/teams/{id}` | Get specific team |
 | `/api/v1/fleet/global/policies` | List global policies |
+| `/api/v1/fleet/global/schedule` | List global schedule |
 | `/api/v1/fleet/teams/{id}/policies` | List team policies |
 | `/api/v1/fleet/queries` | List all queries |
-| `/api/v1/fleet/software/titles` | List software inventory |
+| `/api/v1/fleet/software` | List software inventory |
 | `/api/v1/fleet/labels` | List all labels |
-| `/api/v1/fleet/config` | Get Fleet configuration |
+| `/api/v1/fleet/labels/{id}` | Get label by ID |
+| `/api/v1/fleet/labels/id/{id}` | Delete label by ID |
+| `/api/v1/fleet/labels/{name}` | Delete label by name |
 | `/api/v1/fleet/activities` | Get activity feed |
+| `/api/v1/fleet/spec/enroll_secret` | Get global enroll secrets |
 
 For full API documentation, see: [Fleet REST API](https://fleetdm.com/docs/rest-api/rest-api)
 """)
