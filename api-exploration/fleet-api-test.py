@@ -1278,8 +1278,23 @@ Manage certificate authorities (CAs) connected to Fleet for issuing certificates
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/fleet/certificate_authorities` | GET | List all certificate authorities |
-| `/api/v1/fleet/certificate_authorities/:id` | GET | Get certificate authority details |
+| `/api/v1/fleet/certificate_authorities` | GET | List all CAs |
+| `/api/v1/fleet/certificate_authorities` | POST | Connect new CA |
+| `/api/v1/fleet/certificate_authorities/:id` | GET | Get CA details |
+| `/api/v1/fleet/certificate_authorities/:id` | PATCH | Update CA |
+| `/api/v1/fleet/certificate_authorities/:id` | DELETE | Delete CA |
+| `/api/v1/fleet/certificate_authorities/:id/request_certificate` | POST | Request certificate |
+
+### Supported CA Types
+
+| Type | Required Fields |
+|------|-----------------|
+| **digicert** | name, url, api_token, profile_id |
+| **hydrant** | name, url, client_id, client_secret |
+| **custom_scep_proxy** | name, url, challenge (optional) |
+| **ndes_scep_proxy** | name, url, username, password |
+| **custom_est_proxy** | name, url, username, password |
+| **smallstep** | name, url, challenge_url (optional) |
 """)
 
 
@@ -1342,18 +1357,327 @@ def _(mo, json, fleet, ca_id_input, get_ca_btn, fleet_success, fleet_error, flee
 @app.cell
 def _(mo):
     mo.md("""
+### Connect Certificate Authority
+
+Connect a new CA to Fleet. Select the CA type to see the required fields.
+""")
+
+
+@app.cell
+def _(mo):
+    ca_type_dropdown = mo.ui.dropdown(
+        options={
+            "DigiCert": "digicert",
+            "Hydrant": "hydrant",
+            "Custom SCEP Proxy": "custom_scep_proxy",
+            "NDES SCEP Proxy": "ndes_scep_proxy",
+            "Custom EST Proxy": "custom_est_proxy",
+            "Smallstep": "smallstep",
+        },
+        value="DigiCert",
+        label="CA Type",
+    )
+
+    # Common fields
+    ca_name_input = mo.ui.text(placeholder="My Certificate Authority", label="Name", full_width=True)
+    ca_url_input = mo.ui.text(placeholder="https://ca.example.com", label="URL", full_width=True)
+
+    # DigiCert fields
+    ca_api_token_input = mo.ui.text(placeholder="API Token", label="API Token", kind="password", full_width=True)
+    ca_profile_id_input = mo.ui.text(placeholder="Profile ID", label="Profile ID", full_width=True)
+    ca_common_name_input = mo.ui.text(placeholder="Certificate Common Name (optional)", label="Certificate Common Name", full_width=True)
+
+    # Hydrant fields
+    ca_client_id_input = mo.ui.text(placeholder="Client ID", label="Client ID", full_width=True)
+    ca_client_secret_input = mo.ui.text(placeholder="Client Secret", label="Client Secret", kind="password", full_width=True)
+
+    # SCEP/EST fields
+    ca_challenge_input = mo.ui.text(placeholder="Challenge (optional for custom_scep_proxy)", label="Challenge", full_width=True)
+    ca_username_input = mo.ui.text(placeholder="Username", label="Username", full_width=True)
+    ca_password_input = mo.ui.text(placeholder="Password", label="Password", kind="password", full_width=True)
+
+    # Smallstep fields
+    ca_challenge_url_input = mo.ui.text(placeholder="Challenge URL (optional)", label="Challenge URL", full_width=True)
+
+    connect_ca_btn = mo.ui.run_button(label="Connect CA")
+
+    return (
+        ca_type_dropdown, ca_name_input, ca_url_input, ca_api_token_input, ca_profile_id_input,
+        ca_common_name_input, ca_client_id_input, ca_client_secret_input, ca_challenge_input,
+        ca_username_input, ca_password_input, ca_challenge_url_input, connect_ca_btn
+    )
+
+
+@app.cell
+def _(mo, ca_type_dropdown, ca_name_input, ca_url_input, ca_api_token_input, ca_profile_id_input, ca_common_name_input, ca_client_id_input, ca_client_secret_input, ca_challenge_input, ca_username_input, ca_password_input, ca_challenge_url_input, connect_ca_btn):
+    _ca_type = ca_type_dropdown.value
+
+    # Build dynamic form based on CA type
+    _common_fields = [ca_type_dropdown, ca_name_input, ca_url_input]
+
+    if _ca_type == "digicert":
+        _specific_fields = [ca_api_token_input, ca_profile_id_input, ca_common_name_input]
+    elif _ca_type == "hydrant":
+        _specific_fields = [ca_client_id_input, ca_client_secret_input]
+    elif _ca_type == "custom_scep_proxy":
+        _specific_fields = [ca_challenge_input]
+    elif _ca_type == "ndes_scep_proxy":
+        _specific_fields = [ca_username_input, ca_password_input]
+    elif _ca_type == "custom_est_proxy":
+        _specific_fields = [ca_username_input, ca_password_input]
+    elif _ca_type == "smallstep":
+        _specific_fields = [ca_challenge_url_input]
+    else:
+        _specific_fields = []
+
+    mo.vstack(_common_fields + _specific_fields + [connect_ca_btn])
+
+
+@app.cell
+def _(mo, json, fleet, ca_type_dropdown, ca_name_input, ca_url_input, ca_api_token_input, ca_profile_id_input, ca_common_name_input, ca_client_id_input, ca_client_secret_input, ca_challenge_input, ca_username_input, ca_password_input, ca_challenge_url_input, connect_ca_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not connect_ca_btn.value)
+    mo.stop(not ca_name_input.value, fleet_tip("Enter a name for the CA."))
+    mo.stop(not ca_url_input.value, fleet_tip("Enter the CA URL."))
+
+    _ca_type = ca_type_dropdown.value
+    _ca_config = {
+        "name": ca_name_input.value.strip(),
+        "url": ca_url_input.value.strip(),
+    }
+
+    # Add type-specific fields
+    if _ca_type == "digicert":
+        if not ca_api_token_input.value or not ca_profile_id_input.value:
+            mo.stop(True, fleet_tip("DigiCert requires API Token and Profile ID."))
+        _ca_config["api_token"] = ca_api_token_input.value.strip()
+        _ca_config["profile_id"] = ca_profile_id_input.value.strip()
+        if ca_common_name_input.value:
+            _ca_config["certificate_common_name"] = ca_common_name_input.value.strip()
+    elif _ca_type == "hydrant":
+        if not ca_client_id_input.value or not ca_client_secret_input.value:
+            mo.stop(True, fleet_tip("Hydrant requires Client ID and Client Secret."))
+        _ca_config["client_id"] = ca_client_id_input.value.strip()
+        _ca_config["client_secret"] = ca_client_secret_input.value.strip()
+    elif _ca_type == "custom_scep_proxy":
+        if ca_challenge_input.value:
+            _ca_config["challenge"] = ca_challenge_input.value.strip()
+    elif _ca_type == "ndes_scep_proxy":
+        if not ca_username_input.value or not ca_password_input.value:
+            mo.stop(True, fleet_tip("NDES SCEP requires Username and Password."))
+        _ca_config["username"] = ca_username_input.value.strip()
+        _ca_config["password"] = ca_password_input.value.strip()
+    elif _ca_type == "custom_est_proxy":
+        if not ca_username_input.value or not ca_password_input.value:
+            mo.stop(True, fleet_tip("Custom EST requires Username and Password."))
+        _ca_config["username"] = ca_username_input.value.strip()
+        _ca_config["password"] = ca_password_input.value.strip()
+    elif _ca_type == "smallstep":
+        if ca_challenge_url_input.value:
+            _ca_config["challenge_url"] = ca_challenge_url_input.value.strip()
+
+    _payload = {_ca_type: _ca_config}
+    _status, _data = fleet("POST", "/api/v1/fleet/certificate_authorities", json_data=_payload)
+
+    if _status in (200, 201):
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Connected {_ca_type} CA: {ca_name_input.value}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to connect CA (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Update Certificate Authority
+
+Update an existing CA. Enter the CA ID and select the CA type to see available fields.
+All fields are optional for updates.
+""")
+
+
+@app.cell
+def _(mo):
+    update_ca_id_input = mo.ui.text(placeholder="CA ID", label="CA ID to Update", full_width=True)
+
+    update_ca_type_dropdown = mo.ui.dropdown(
+        options={
+            "DigiCert": "digicert",
+            "Hydrant": "hydrant",
+            "Custom SCEP Proxy": "custom_scep_proxy",
+            "NDES SCEP Proxy": "ndes_scep_proxy",
+            "Custom EST Proxy": "custom_est_proxy",
+            "Smallstep": "smallstep",
+        },
+        value="DigiCert",
+        label="CA Type",
+    )
+
+    # Update fields (all optional)
+    update_ca_name_input = mo.ui.text(placeholder="New Name (optional)", label="Name", full_width=True)
+    update_ca_url_input = mo.ui.text(placeholder="New URL (optional)", label="URL", full_width=True)
+    update_ca_api_token_input = mo.ui.text(placeholder="New API Token (optional)", label="API Token", kind="password", full_width=True)
+    update_ca_profile_id_input = mo.ui.text(placeholder="New Profile ID (optional)", label="Profile ID", full_width=True)
+    update_ca_common_name_input = mo.ui.text(placeholder="New Common Name (optional)", label="Certificate Common Name", full_width=True)
+    update_ca_client_id_input = mo.ui.text(placeholder="New Client ID (optional)", label="Client ID", full_width=True)
+    update_ca_client_secret_input = mo.ui.text(placeholder="New Client Secret (optional)", label="Client Secret", kind="password", full_width=True)
+    update_ca_challenge_input = mo.ui.text(placeholder="New Challenge (optional)", label="Challenge", full_width=True)
+    update_ca_username_input = mo.ui.text(placeholder="New Username (optional)", label="Username", full_width=True)
+    update_ca_password_input = mo.ui.text(placeholder="New Password (optional)", label="Password", kind="password", full_width=True)
+    update_ca_challenge_url_input = mo.ui.text(placeholder="New Challenge URL (optional)", label="Challenge URL", full_width=True)
+
+    update_ca_btn = mo.ui.run_button(label="Update CA")
+
+    return (
+        update_ca_id_input, update_ca_type_dropdown, update_ca_name_input, update_ca_url_input,
+        update_ca_api_token_input, update_ca_profile_id_input, update_ca_common_name_input,
+        update_ca_client_id_input, update_ca_client_secret_input, update_ca_challenge_input,
+        update_ca_username_input, update_ca_password_input, update_ca_challenge_url_input, update_ca_btn
+    )
+
+
+@app.cell
+def _(mo, update_ca_id_input, update_ca_type_dropdown, update_ca_name_input, update_ca_url_input, update_ca_api_token_input, update_ca_profile_id_input, update_ca_common_name_input, update_ca_client_id_input, update_ca_client_secret_input, update_ca_challenge_input, update_ca_username_input, update_ca_password_input, update_ca_challenge_url_input, update_ca_btn):
+    _ca_type = update_ca_type_dropdown.value
+
+    _common_fields = [update_ca_id_input, update_ca_type_dropdown, update_ca_name_input, update_ca_url_input]
+
+    if _ca_type == "digicert":
+        _specific_fields = [update_ca_api_token_input, update_ca_profile_id_input, update_ca_common_name_input]
+    elif _ca_type == "hydrant":
+        _specific_fields = [update_ca_client_id_input, update_ca_client_secret_input]
+    elif _ca_type == "custom_scep_proxy":
+        _specific_fields = [update_ca_challenge_input]
+    elif _ca_type == "ndes_scep_proxy":
+        _specific_fields = [update_ca_username_input, update_ca_password_input]
+    elif _ca_type == "custom_est_proxy":
+        _specific_fields = [update_ca_username_input, update_ca_password_input]
+    elif _ca_type == "smallstep":
+        _specific_fields = [update_ca_challenge_url_input]
+    else:
+        _specific_fields = []
+
+    mo.vstack(_common_fields + _specific_fields + [update_ca_btn])
+
+
+@app.cell
+def _(mo, json, fleet, update_ca_id_input, update_ca_type_dropdown, update_ca_name_input, update_ca_url_input, update_ca_api_token_input, update_ca_profile_id_input, update_ca_common_name_input, update_ca_client_id_input, update_ca_client_secret_input, update_ca_challenge_input, update_ca_username_input, update_ca_password_input, update_ca_challenge_url_input, update_ca_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not update_ca_btn.value)
+    mo.stop(not update_ca_id_input.value, fleet_tip("Enter a CA ID to update."))
+
+    _ca_id = update_ca_id_input.value.strip()
+    _ca_type = update_ca_type_dropdown.value
+    _ca_config = {}
+
+    # Add non-empty fields
+    if update_ca_name_input.value:
+        _ca_config["name"] = update_ca_name_input.value.strip()
+    if update_ca_url_input.value:
+        _ca_config["url"] = update_ca_url_input.value.strip()
+
+    if _ca_type == "digicert":
+        if update_ca_api_token_input.value:
+            _ca_config["api_token"] = update_ca_api_token_input.value.strip()
+        if update_ca_profile_id_input.value:
+            _ca_config["profile_id"] = update_ca_profile_id_input.value.strip()
+        if update_ca_common_name_input.value:
+            _ca_config["certificate_common_name"] = update_ca_common_name_input.value.strip()
+    elif _ca_type == "hydrant":
+        if update_ca_client_id_input.value:
+            _ca_config["client_id"] = update_ca_client_id_input.value.strip()
+        if update_ca_client_secret_input.value:
+            _ca_config["client_secret"] = update_ca_client_secret_input.value.strip()
+    elif _ca_type == "custom_scep_proxy":
+        if update_ca_challenge_input.value:
+            _ca_config["challenge"] = update_ca_challenge_input.value.strip()
+    elif _ca_type == "ndes_scep_proxy":
+        if update_ca_username_input.value:
+            _ca_config["username"] = update_ca_username_input.value.strip()
+        if update_ca_password_input.value:
+            _ca_config["password"] = update_ca_password_input.value.strip()
+    elif _ca_type == "custom_est_proxy":
+        if update_ca_username_input.value:
+            _ca_config["username"] = update_ca_username_input.value.strip()
+        if update_ca_password_input.value:
+            _ca_config["password"] = update_ca_password_input.value.strip()
+    elif _ca_type == "smallstep":
+        if update_ca_challenge_url_input.value:
+            _ca_config["challenge_url"] = update_ca_challenge_url_input.value.strip()
+
+    if not _ca_config:
+        mo.stop(True, fleet_tip("Enter at least one field to update."))
+
+    _payload = {_ca_type: _ca_config}
+    _status, _data = fleet("PATCH", f"/api/v1/fleet/certificate_authorities/{_ca_id}", json_data=_payload)
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Updated CA {_ca_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to update CA (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Delete Certificate Authority
+
+Delete a CA from Fleet. This action cannot be undone.
+""")
+
+
+@app.cell
+def _(mo):
+    delete_ca_id_input = mo.ui.text(placeholder="CA ID", label="CA ID to Delete")
+    delete_ca_btn = mo.ui.run_button(label="Delete CA", kind="danger")
+
+    mo.hstack([delete_ca_id_input, delete_ca_btn], justify="start", gap=1)
+
+    return delete_ca_id_input, delete_ca_btn
+
+
+@app.cell
+def _(mo, fleet, delete_ca_id_input, delete_ca_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not delete_ca_btn.value)
+    mo.stop(not delete_ca_id_input.value, fleet_tip("Enter a CA ID to delete."))
+
+    _ca_id = delete_ca_id_input.value.strip()
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/certificate_authorities/{_ca_id}")
+
+    if _status == 200:
+        _result = fleet_success(f"Deleted Certificate Authority {_ca_id}")
+    else:
+        _result = fleet_error(f"Failed to delete CA (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
 ---
 
 ## Certificate Templates
 
 [📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#list-certificate-templates)
 
-List and view certificate templates configured in Fleet.
+Manage certificate templates configured in Fleet.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/fleet/certificates` | GET | List all certificate templates |
-| `/api/v1/fleet/certificates/:id` | GET | Get certificate template details |
+| `/api/v1/fleet/certificates` | GET | List all templates |
+| `/api/v1/fleet/certificates` | POST | Add new template |
+| `/api/v1/fleet/certificates/:id` | GET | Get template details |
+| `/api/v1/fleet/certificates/:id` | DELETE | Delete template |
 
 **Authentication options for Get Certificate Template:**
 - `Authorization: Bearer <api_token>` (standard API token)
@@ -1435,6 +1759,361 @@ def _(mo, json, httpx, fleet_url_input, api_token_input, cert_id_input, cert_nod
         ])
     else:
         _result = fleet_error(f"Failed to get certificate (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Add Certificate Template
+
+Add a new certificate template. The template links a CA to hosts via team assignment.
+
+#### Subject Name Variables Reference
+
+The subject name field supports Fleet variables that are replaced with device/user-specific values at runtime.
+
+| Variable | Description |
+|----------|-------------|
+| `$FLEET_VAR_HOST_UUID` | Unique host identifier |
+| `$FLEET_VAR_HOST_HARDWARE_SERIAL` | Device hardware serial number |
+| `$FLEET_VAR_HOST_END_USER_IDP_USERNAME` | End user's IDP username (typically email) |
+| `$FLEET_VAR_HOST_END_USER_IDP_USERNAME_LOCAL_PART` | Local part of IDP username (before @) |
+| `$FLEET_VAR_HOST_END_USER_IDP_FULL_NAME` | End user's full name from IDP |
+| `$FLEET_VAR_HOST_END_USER_IDP_DEPARTMENT` | End user's department from IDP |
+| `$FLEET_VAR_HOST_END_USER_IDP_GROUPS` | Comma-separated IDP group memberships |
+| `$FLEET_VAR_HOST_PLATFORM` | Device platform (darwin, windows, linux) |
+
+**Subject Name Format:** Uses DN (Distinguished Name) format: `/KEY=value/KEY=value`
+
+Common DN keys: `CN` (Common Name), `OU` (Organizational Unit), `O` (Organization), `ST` (State), `C` (Country)
+""")
+
+
+@app.cell
+def _(mo):
+    # Subject name builder - Fleet variables and common templates
+    FLEET_VARS = {
+        "Host UUID": "$FLEET_VAR_HOST_UUID",
+        "Hardware Serial": "$FLEET_VAR_HOST_HARDWARE_SERIAL",
+        "IDP Username": "$FLEET_VAR_HOST_END_USER_IDP_USERNAME",
+        "IDP Username (local part)": "$FLEET_VAR_HOST_END_USER_IDP_USERNAME_LOCAL_PART",
+        "IDP Full Name": "$FLEET_VAR_HOST_END_USER_IDP_FULL_NAME",
+        "IDP Department": "$FLEET_VAR_HOST_END_USER_IDP_DEPARTMENT",
+        "IDP Groups": "$FLEET_VAR_HOST_END_USER_IDP_GROUPS",
+        "Host Platform": "$FLEET_VAR_HOST_PLATFORM",
+    }
+
+    SUBJECT_TEMPLATES = {
+        "WiFi Certificate (User + Device)": "/CN=$FLEET_VAR_HOST_END_USER_IDP_USERNAME/OU=$FLEET_VAR_HOST_UUID/ST=$FLEET_VAR_HOST_HARDWARE_SERIAL",
+        "VPN Certificate (User + UUID)": "/CN=$FLEET_VAR_HOST_END_USER_IDP_USERNAME/OU=$FLEET_VAR_HOST_UUID",
+        "Device Only (Serial + UUID)": "/CN=$FLEET_VAR_HOST_HARDWARE_SERIAL/OU=$FLEET_VAR_HOST_UUID",
+        "User Email Only": "/CN=$FLEET_VAR_HOST_END_USER_IDP_USERNAME",
+        "Full User Info": "/CN=$FLEET_VAR_HOST_END_USER_IDP_FULL_NAME/OU=$FLEET_VAR_HOST_END_USER_IDP_DEPARTMENT/O=$FLEET_VAR_HOST_END_USER_IDP_USERNAME",
+        "Custom (build below)": "",
+    }
+
+    # Template selector
+    subject_template_dropdown = mo.ui.dropdown(
+        options=SUBJECT_TEMPLATES,
+        value="WiFi Certificate (User + Device)",
+        label="Quick Template",
+    )
+
+    # DN components for custom builder
+    dn_cn_var = mo.ui.dropdown(
+        options={"(none)": "", **FLEET_VARS},
+        value="IDP Username",
+        label="CN (Common Name)",
+    )
+
+    dn_ou_var = mo.ui.dropdown(
+        options={"(none)": "", **FLEET_VARS},
+        value="Host UUID",
+        label="OU (Org Unit)",
+    )
+
+    dn_o_var = mo.ui.dropdown(
+        options={"(none)": "", "(custom text)": "CUSTOM", **FLEET_VARS},
+        value="(none)",
+        label="O (Organization)",
+    )
+
+    dn_o_custom_text = mo.ui.text(placeholder="Custom org name", label="Custom O")
+
+    dn_st_var = mo.ui.dropdown(
+        options={"(none)": "", **FLEET_VARS},
+        value="(none)",
+        label="ST (State/Extra)",
+    )
+
+    return FLEET_VARS, SUBJECT_TEMPLATES, subject_template_dropdown, dn_cn_var, dn_ou_var, dn_o_var, dn_o_custom_text, dn_st_var
+
+
+@app.cell
+def _(mo, SUBJECT_TEMPLATES, subject_template_dropdown, dn_cn_var, dn_ou_var, dn_o_var, dn_o_custom_text, dn_st_var):
+    # Build subject name from template or custom components
+    _template_value = subject_template_dropdown.value
+
+    if _template_value:
+        # Using a preset template
+        built_subject_name = _template_value
+        _builder_mode = "template"
+    else:
+        # Build custom subject name from components
+        _parts = []
+        if dn_cn_var.value:
+            _parts.append(f"/CN={dn_cn_var.value}")
+        if dn_ou_var.value:
+            _parts.append(f"/OU={dn_ou_var.value}")
+        if dn_o_var.value:
+            if dn_o_var.value == "CUSTOM" and dn_o_custom_text.value:
+                _parts.append(f"/O={dn_o_custom_text.value}")
+            elif dn_o_var.value != "CUSTOM":
+                _parts.append(f"/O={dn_o_var.value}")
+        if dn_st_var.value:
+            _parts.append(f"/ST={dn_st_var.value}")
+
+        built_subject_name = "".join(_parts) if _parts else ""
+        _builder_mode = "custom"
+
+    mo.vstack([
+        mo.md("#### Subject Name Builder"),
+        subject_template_dropdown,
+        mo.md("**Custom Builder** *(select 'Custom' template above to use)*:"),
+        mo.hstack([dn_cn_var, dn_ou_var], gap=1),
+        mo.hstack([dn_o_var, dn_o_custom_text, dn_st_var], gap=1),
+        mo.callout(
+            mo.md(f"**Built Subject Name:**\n```\n{built_subject_name}\n```") if built_subject_name else mo.md("*Select a template or build custom*"),
+            kind="info",
+        ),
+    ])
+
+    return (built_subject_name,)
+
+
+@app.cell
+def _(mo, built_subject_name):
+    add_cert_name_input = mo.ui.text(
+        placeholder="My Certificate Template",
+        label="Name (max 255 characters)",
+        full_width=True,
+    )
+
+    add_cert_ca_id_input = mo.ui.text(
+        placeholder="Certificate Authority ID",
+        label="Certificate Authority ID",
+        full_width=True,
+    )
+
+    # Pre-fill with built subject name, but allow override
+    add_cert_subject_input = mo.ui.text(
+        placeholder="CN=$FLEET_VAR_HOST_END_USER_IDP_USERNAME",
+        label="Subject Name (edit or use builder above)",
+        value=built_subject_name if built_subject_name else "",
+        full_width=True,
+    )
+
+    add_cert_team_id_input = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = no team)",
+    )
+
+    add_cert_btn = mo.ui.run_button(label="Add Certificate Template")
+
+    mo.vstack([
+        mo.md("#### Template Details"),
+        add_cert_name_input,
+        add_cert_ca_id_input,
+        add_cert_subject_input,
+        add_cert_team_id_input,
+        mo.hstack([add_cert_btn], justify="start"),
+    ])
+
+    return add_cert_name_input, add_cert_ca_id_input, add_cert_subject_input, add_cert_team_id_input, add_cert_btn
+
+
+@app.cell
+def _(mo, json, fleet, add_cert_name_input, add_cert_ca_id_input, add_cert_subject_input, add_cert_team_id_input, add_cert_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not add_cert_btn.value)
+    mo.stop(not add_cert_name_input.value, fleet_tip("Enter a name for the certificate template."))
+    mo.stop(not add_cert_ca_id_input.value, fleet_tip("Enter a Certificate Authority ID."))
+    mo.stop(not add_cert_subject_input.value, fleet_tip("Enter a subject name for the certificate."))
+
+    _payload = {
+        "name": add_cert_name_input.value.strip()[:255],
+        "certificate_authority_id": int(add_cert_ca_id_input.value.strip()),
+        "subject_name": add_cert_subject_input.value.strip(),
+    }
+
+    # Add team_id if specified (non-zero)
+    if add_cert_team_id_input.value > 0:
+        _payload["team_id"] = add_cert_team_id_input.value
+
+    _status, _data = fleet("POST", "/api/v1/fleet/certificates", json_data=_payload)
+
+    if _status in (200, 201):
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Created certificate template: {add_cert_name_input.value}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to add certificate template (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Delete Certificate Template
+
+Delete a certificate template from Fleet. This action cannot be undone.
+""")
+
+
+@app.cell
+def _(mo):
+    delete_cert_id_input = mo.ui.text(placeholder="Certificate Template ID", label="Certificate ID to Delete")
+    delete_cert_btn = mo.ui.run_button(label="Delete Template", kind="danger")
+
+    mo.hstack([delete_cert_id_input, delete_cert_btn], justify="start", gap=1)
+
+    return delete_cert_id_input, delete_cert_btn
+
+
+@app.cell
+def _(mo, fleet, delete_cert_id_input, delete_cert_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not delete_cert_btn.value)
+    mo.stop(not delete_cert_id_input.value, fleet_tip("Enter a Certificate Template ID to delete."))
+
+    _cert_id = delete_cert_id_input.value.strip()
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/certificates/{_cert_id}")
+
+    if _status == 200:
+        _result = fleet_success(f"Deleted Certificate Template {_cert_id}")
+    else:
+        _result = fleet_error(f"Failed to delete certificate template (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
+## Request Certificate
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#request-certificate)
+
+Request a certificate from a Certificate Authority. This endpoint is used by devices
+to request certificates using a CSR (Certificate Signing Request).
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/fleet/certificate_authorities/:id/request_certificate` | POST | Request a certificate |
+
+**Supported CA Types:**
+- Hydrant
+- Custom EST Proxy
+
+**Required Fields:**
+- `csr` - PEM-encoded Certificate Signing Request
+
+**Optional IDP Authentication Fields:**
+- `idp_oauth_url` - Identity Provider OAuth URL
+- `idp_access_token` - IDP access token
+- `idp_client_id` - IDP client ID
+""")
+
+
+@app.cell
+def _(mo):
+    request_cert_ca_id_input = mo.ui.text(
+        placeholder="Certificate Authority ID",
+        label="CA ID",
+        full_width=True,
+    )
+
+    request_cert_csr_input = mo.ui.text_area(
+        placeholder="""-----BEGIN CERTIFICATE REQUEST-----
+MIICYTCCAUkCAQAwHDELMAkGA1UEBhMCVVMxDTALBgNVBAoMBFRlc3QwggEiMA0G
+...
+-----END CERTIFICATE REQUEST-----""",
+        label="CSR (PEM format)",
+        full_width=True,
+        rows=10,
+    )
+
+    request_cert_idp_url_input = mo.ui.text(
+        placeholder="https://idp.example.com/oauth (optional)",
+        label="IDP OAuth URL (optional)",
+        full_width=True,
+    )
+
+    request_cert_idp_token_input = mo.ui.text(
+        placeholder="IDP access token (optional)",
+        label="IDP Access Token (optional)",
+        kind="password",
+        full_width=True,
+    )
+
+    request_cert_idp_client_id_input = mo.ui.text(
+        placeholder="IDP client ID (optional)",
+        label="IDP Client ID (optional)",
+        full_width=True,
+    )
+
+    request_cert_btn = mo.ui.run_button(label="Request Certificate")
+
+    mo.vstack([
+        request_cert_ca_id_input,
+        request_cert_csr_input,
+        mo.md("**Optional IDP Authentication:**"),
+        request_cert_idp_url_input,
+        request_cert_idp_token_input,
+        request_cert_idp_client_id_input,
+        mo.hstack([request_cert_btn], justify="start"),
+    ])
+
+    return (
+        request_cert_ca_id_input, request_cert_csr_input, request_cert_idp_url_input,
+        request_cert_idp_token_input, request_cert_idp_client_id_input, request_cert_btn
+    )
+
+
+@app.cell
+def _(mo, json, fleet, request_cert_ca_id_input, request_cert_csr_input, request_cert_idp_url_input, request_cert_idp_token_input, request_cert_idp_client_id_input, request_cert_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not request_cert_btn.value)
+    mo.stop(not request_cert_ca_id_input.value, fleet_tip("Enter a Certificate Authority ID."))
+    mo.stop(not request_cert_csr_input.value, fleet_tip("Enter a PEM-encoded CSR."))
+
+    _ca_id = request_cert_ca_id_input.value.strip()
+    _payload = {
+        "csr": request_cert_csr_input.value.strip(),
+    }
+
+    # Add optional IDP fields if provided
+    if request_cert_idp_url_input.value:
+        _payload["idp_oauth_url"] = request_cert_idp_url_input.value.strip()
+    if request_cert_idp_token_input.value:
+        _payload["idp_access_token"] = request_cert_idp_token_input.value.strip()
+    if request_cert_idp_client_id_input.value:
+        _payload["idp_client_id"] = request_cert_idp_client_id_input.value.strip()
+
+    _status, _data = fleet("POST", f"/api/v1/fleet/certificate_authorities/{_ca_id}/request_certificate", json_data=_payload)
+
+    if _status in (200, 201):
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Certificate requested from CA {_ca_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to request certificate (status {_status}): {_data}")
 
     _result
 
