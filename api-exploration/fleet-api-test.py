@@ -363,6 +363,8 @@ def _(mo, env_fleet_url, env_fleet_token):
     mo.md(f"""
 ## Configuration
 
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#get-configuration)
+
 Enter your Fleet instance details (or use `.env` file with `FLEET_URL` and `FLEET_API_TOKEN`):
 
 {fleet_url_input}
@@ -461,6 +463,8 @@ def _(mo):
 
 ## API Endpoints Explorer
 
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api)
+
 Select an endpoint to query:
 """)
 
@@ -557,6 +561,8 @@ def _(mo):
 ---
 
 ## Custom API Request
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api)
 
 Make a custom GET request to any Fleet API endpoint:
 """)
@@ -665,6 +671,8 @@ def _(mo):
 ---
 
 ## Labels CRUD Operations
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#labels)
 
 Test create, read, and delete operations on Fleet labels:
 """)
@@ -825,6 +833,8 @@ def _(mo):
 ---
 
 ## MDM Commands
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#run-mdm-command)
 
 Run MDM commands on enrolled macOS hosts. These commands are **read-only queries** that retrieve device information without making any changes:
 
@@ -1258,7 +1268,333 @@ def _(mo):
     mo.md("""
 ---
 
+## Certificate Authorities
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#list-certificate-authorities-cas)
+
+Manage certificate authorities (CAs) connected to Fleet for issuing certificates.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/fleet/certificate_authorities` | GET | List all certificate authorities |
+| `/api/v1/fleet/certificate_authorities/:id` | GET | Get certificate authority details |
+""")
+
+
+@app.cell
+def _(mo):
+    list_cas_btn = mo.ui.run_button(label="List Certificate Authorities")
+    ca_id_input = mo.ui.text(placeholder="CA ID", label="CA ID")
+    get_ca_btn = mo.ui.run_button(label="Get CA Details")
+
+    mo.vstack([
+        mo.hstack([list_cas_btn], justify="start"),
+        mo.hstack([ca_id_input, get_ca_btn], justify="start", gap=1),
+    ])
+
+    return list_cas_btn, ca_id_input, get_ca_btn
+
+
+@app.cell
+def _(mo, json, fleet, list_cas_btn, fleet_success, fleet_error):
+    mo.stop(not list_cas_btn.value)
+
+    _status, _data = fleet("GET", "/api/v1/fleet/certificate_authorities")
+
+    if _status == 200:
+        _cas = _data.get("certificate_authorities", [])
+        if _cas:
+            _formatted = json.dumps(_cas, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {len(_cas)} certificate authority(ies)"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No certificate authorities configured.**")
+    else:
+        _result = fleet_error(f"Failed to list CAs (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, json, fleet, ca_id_input, get_ca_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_ca_btn.value)
+    mo.stop(not ca_id_input.value, fleet_tip("Enter a CA ID to get details."))
+
+    _ca_id = ca_id_input.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/certificate_authorities/{_ca_id}")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Certificate Authority {_ca_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get CA (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
+## Certificate Templates
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#list-certificate-templates)
+
+List and view certificate templates configured in Fleet.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/fleet/certificates` | GET | List all certificate templates |
+| `/api/v1/fleet/certificates/:id` | GET | Get certificate template details |
+
+**Authentication options for Get Certificate Template:**
+- `Authorization: Bearer <api_token>` (standard API token)
+- `Authorization: Node key <host_uuid>` (device node key)
+""")
+
+
+@app.cell
+def _(mo):
+    list_certs_btn = mo.ui.run_button(label="List Certificate Templates")
+    cert_id_input = mo.ui.text(placeholder="Certificate ID", label="Certificate ID")
+    cert_node_key_input = mo.ui.text(placeholder="Optional: Node key (host UUID)", label="Node Key (optional)")
+    get_cert_btn = mo.ui.run_button(label="Get Certificate Details")
+
+    mo.vstack([
+        mo.hstack([list_certs_btn], justify="start"),
+        mo.hstack([cert_id_input, cert_node_key_input, get_cert_btn], justify="start", gap=1),
+    ])
+
+    return list_certs_btn, cert_id_input, cert_node_key_input, get_cert_btn
+
+
+@app.cell
+def _(mo, json, fleet, list_certs_btn, fleet_success, fleet_error):
+    mo.stop(not list_certs_btn.value)
+
+    _status, _data = fleet("GET", "/api/v1/fleet/certificates")
+
+    if _status == 200:
+        _certs = _data.get("certificates", [])
+        if _certs:
+            _formatted = json.dumps(_certs, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {len(_certs)} certificate template(s)"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No certificate templates configured.**")
+    else:
+        _result = fleet_error(f"Failed to list certificates (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, json, httpx, fleet_url_input, api_token_input, cert_id_input, cert_node_key_input, get_cert_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_cert_btn.value)
+    mo.stop(not cert_id_input.value, fleet_tip("Enter a Certificate ID to get details."))
+
+    _cert_id = cert_id_input.value.strip()
+    _node_key = cert_node_key_input.value.strip() if cert_node_key_input.value else None
+
+    # Use Node key auth if provided, otherwise use Bearer token
+    if _node_key:
+        _headers = {"Authorization": f"Node key {_node_key}"}
+        _auth_method = "Node key"
+    else:
+        _headers = {"Authorization": f"Bearer {api_token_input.value}"}
+        _auth_method = "Bearer token"
+
+    try:
+        _response = httpx.get(
+            f"{fleet_url_input.value}/api/v1/fleet/certificates/{_cert_id}",
+            headers=_headers,
+            verify=True,
+            timeout=30.0,
+        )
+        _status = _response.status_code
+        _data = _response.json() if _response.text else {}
+    except Exception as e:
+        _status = 0
+        _data = {"error": str(e)}
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Certificate Template {_cert_id} (via {_auth_method})"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get certificate (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
+## Webhook Settings
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#webhook-settings)
+
+View and manage Fleet webhook configurations. Webhooks notify external services about Fleet events.
+
+| Webhook | Description |
+|---------|-------------|
+| **host_status_webhook** | Triggered when hosts fail to check in |
+| **failing_policies_webhook** | Triggered when policies fail on hosts |
+| **vulnerabilities_webhook** | Triggered when new vulnerabilities are detected |
+| **activities_webhook** | Triggered for Fleet activities |
+""")
+
+
+@app.cell
+def _(mo, json, fleet, fleet_success, fleet_error):
+    get_webhooks_btn = mo.ui.run_button(label="Get Current Webhook Settings")
+
+    mo.hstack([get_webhooks_btn], justify="start")
+
+    return (get_webhooks_btn,)
+
+
+@app.cell
+def _(mo, json, fleet, get_webhooks_btn, fleet_success, fleet_error):
+    mo.stop(not get_webhooks_btn.value)
+
+    _status, _data = fleet("GET", "/api/v1/fleet/config")
+
+    if _status == 200:
+        _webhook_settings = _data.get("webhook_settings", {})
+        _formatted = json.dumps(_webhook_settings, indent=2)
+        _result = mo.vstack([
+            fleet_success("Current Webhook Settings"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get config (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Update Webhook Settings
+
+Configure individual webhook settings below. Fill in the fields and click Update.
+""")
+
+
+@app.cell
+def _(mo):
+    webhook_type_dropdown = mo.ui.dropdown(
+        options={
+            "Host Status Webhook": "host_status_webhook",
+            "Failing Policies Webhook": "failing_policies_webhook",
+            "Vulnerabilities Webhook": "vulnerabilities_webhook",
+            "Activities Webhook": "activities_webhook",
+        },
+        value="Host Status Webhook",
+        label="Webhook Type",
+    )
+
+    webhook_enabled = mo.ui.checkbox(label="Enable Webhook")
+
+    webhook_url = mo.ui.text(
+        placeholder="https://your-webhook-endpoint.com/hook",
+        label="Destination URL",
+        full_width=True,
+    )
+
+    # Additional settings for specific webhooks
+    host_percentage = mo.ui.number(
+        start=1, stop=100, step=1, value=5,
+        label="Host Percentage (host_status only)",
+    )
+
+    days_count = mo.ui.number(
+        start=1, stop=30, step=1, value=7,
+        label="Days Count (host_status only)",
+    )
+
+    host_batch_size = mo.ui.number(
+        start=100, stop=10000, step=100, value=1000,
+        label="Host Batch Size (policies/vulnerabilities)",
+    )
+
+    update_webhook_btn = mo.ui.run_button(label="Update Webhook")
+
+    mo.vstack([
+        webhook_type_dropdown,
+        webhook_enabled,
+        webhook_url,
+        host_percentage,
+        days_count,
+        host_batch_size,
+        mo.hstack([update_webhook_btn], justify="start"),
+    ])
+
+    return webhook_type_dropdown, webhook_enabled, webhook_url, host_percentage, days_count, host_batch_size, update_webhook_btn
+
+
+@app.cell
+def _(mo, json, fleet, webhook_type_dropdown, webhook_enabled, webhook_url, host_percentage, days_count, host_batch_size, update_webhook_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not update_webhook_btn.value)
+    mo.stop(not webhook_url.value, fleet_tip("Enter a destination URL for the webhook."))
+
+    _webhook_key = webhook_type_dropdown.value
+    _enable_key = f"enable_{_webhook_key}"
+
+    # Build webhook config based on type
+    _webhook_config = {
+        _enable_key: webhook_enabled.value,
+        "destination_url": webhook_url.value,
+    }
+
+    if _webhook_key == "host_status_webhook":
+        _webhook_config["host_percentage"] = host_percentage.value
+        _webhook_config["days_count"] = days_count.value
+    elif _webhook_key in ("failing_policies_webhook", "vulnerabilities_webhook"):
+        _webhook_config["host_batch_size"] = host_batch_size.value
+
+    _payload = {
+        "webhook_settings": {
+            _webhook_key: _webhook_config
+        }
+    }
+
+    _status, _data = fleet("PATCH", "/api/v1/fleet/config", json_data=_payload)
+
+    if _status == 200:
+        _updated = _data.get("webhook_settings", {}).get(_webhook_key, {})
+        _formatted = json.dumps(_updated, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Updated {_webhook_key}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to update webhook (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
 ## Common API Endpoints Reference
+
+[📖 Full API Documentation](https://fleetdm.com/docs/rest-api/rest-api)
 
 | Endpoint | Description |
 |----------|-------------|
