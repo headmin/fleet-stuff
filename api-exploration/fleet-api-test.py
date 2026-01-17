@@ -672,6 +672,528 @@ def _(mo):
     mo.md("""
 ---
 
+## Custom Variables
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#custom-variables)
+
+Manage custom variables that can be used in scripts and profiles. Custom variables are prefixed with `$FLEET_SECRET_` and allow you to inject secrets into scripts without exposing them in source code.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/fleet/custom_variables` | GET | List all custom variables |
+| `/api/v1/fleet/custom_variables` | POST | Create a custom variable |
+| `/api/v1/fleet/custom_variables/:name` | DELETE | Delete a custom variable |
+
+**Usage in scripts:**
+```bash
+echo "Connecting to $FLEET_SECRET_API_KEY"
+```
+
+**Variable names:** Must be alphanumeric with underscores (e.g., `API_KEY`, `DB_PASSWORD`). The `$FLEET_SECRET_` prefix is added automatically.
+""")
+
+
+@app.cell
+def _(mo):
+    list_custom_vars_btn = mo.ui.run_button(label="List Custom Variables")
+
+    mo.hstack([list_custom_vars_btn], justify="start")
+
+    return (list_custom_vars_btn,)
+
+
+@app.cell
+def _(mo, json, fleet, list_custom_vars_btn, fleet_success, fleet_error):
+    mo.stop(not list_custom_vars_btn.value)
+
+    _status, _data = fleet("GET", "/api/v1/fleet/custom_variables")
+
+    if _status == 200:
+        _vars = _data.get("custom_variables", [])
+        if _vars:
+            _formatted = json.dumps(_vars, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {len(_vars)} custom variable(s)"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No custom variables configured.**")
+    else:
+        _result = fleet_error(f"Failed to list custom variables (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Create Custom Variable
+
+Create a new custom variable. The variable will be available as `$FLEET_SECRET_<name>` in scripts and profiles.
+""")
+
+
+@app.cell
+def _(mo):
+    custom_var_name_input = mo.ui.text(
+        placeholder="API_KEY",
+        label="Variable Name (without FLEET_SECRET_ prefix)",
+        full_width=True,
+    )
+
+    custom_var_value_input = mo.ui.text(
+        placeholder="your-secret-value",
+        label="Variable Value",
+        kind="password",
+        full_width=True,
+    )
+
+    custom_var_team_id_input = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = global)",
+    )
+
+    create_custom_var_btn = mo.ui.run_button(label="Create Variable")
+
+    mo.vstack([
+        custom_var_name_input,
+        custom_var_value_input,
+        custom_var_team_id_input,
+        mo.hstack([create_custom_var_btn], justify="start"),
+    ])
+
+    return custom_var_name_input, custom_var_value_input, custom_var_team_id_input, create_custom_var_btn
+
+
+@app.cell
+def _(mo, json, fleet, custom_var_name_input, custom_var_value_input, custom_var_team_id_input, create_custom_var_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not create_custom_var_btn.value)
+    mo.stop(not custom_var_name_input.value, fleet_tip("Enter a variable name."))
+    mo.stop(not custom_var_value_input.value, fleet_tip("Enter a variable value."))
+
+    _payload = {
+        "name": custom_var_name_input.value.strip(),
+        "value": custom_var_value_input.value,
+    }
+
+    # Add team_id if specified (non-zero)
+    if custom_var_team_id_input.value > 0:
+        _payload["team_id"] = custom_var_team_id_input.value
+
+    _status, _data = fleet("POST", "/api/v1/fleet/custom_variables", json_data=_payload)
+
+    if _status in (200, 201):
+        _var_name = custom_var_name_input.value.strip()
+        _result = mo.vstack([
+            fleet_success(f"Created custom variable: <code>$FLEET_SECRET_{_var_name}</code>"),
+            mo.md(f"```json\n{json.dumps(_data, indent=2)}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to create custom variable (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Delete Custom Variable
+
+Delete a custom variable. This action cannot be undone.
+""")
+
+
+@app.cell
+def _(mo):
+    delete_custom_var_name_input = mo.ui.text(
+        placeholder="API_KEY",
+        label="Variable Name to Delete (without FLEET_SECRET_ prefix)",
+    )
+    delete_custom_var_btn = mo.ui.run_button(label="Delete Variable", kind="danger")
+
+    mo.hstack([delete_custom_var_name_input, delete_custom_var_btn], justify="start", gap=1)
+
+    return delete_custom_var_name_input, delete_custom_var_btn
+
+
+@app.cell
+def _(mo, fleet, delete_custom_var_name_input, delete_custom_var_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not delete_custom_var_btn.value)
+    mo.stop(not delete_custom_var_name_input.value, fleet_tip("Enter a variable name to delete."))
+
+    _var_name = delete_custom_var_name_input.value.strip()
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/custom_variables/{_var_name}")
+
+    if _status == 200:
+        _result = fleet_success(f"Deleted custom variable: <code>$FLEET_SECRET_{_var_name}</code>")
+    else:
+        _result = fleet_error(f"Failed to delete custom variable (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
+## Teams
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#teams)
+
+Manage Fleet teams. Teams allow you to segment hosts and apply different configurations.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/fleet/teams` | GET | List all teams |
+| `/api/v1/fleet/teams/:id` | GET | Get team details |
+| `/api/v1/fleet/teams` | POST | Create team |
+| `/api/v1/fleet/teams/:id` | PATCH | Update team |
+| `/api/v1/fleet/teams/:id/users` | PATCH | Add users to team |
+| `/api/v1/fleet/teams/:id/agent_options` | POST | Update team's agent options |
+| `/api/v1/fleet/teams/:id` | DELETE | Delete team |
+""")
+
+
+@app.cell
+def _(mo):
+    list_teams_btn = mo.ui.run_button(label="List Teams")
+    team_id_input = mo.ui.text(placeholder="Team ID", label="Team ID")
+    get_team_btn = mo.ui.run_button(label="Get Team")
+
+    mo.vstack([
+        mo.hstack([list_teams_btn], justify="start"),
+        mo.hstack([team_id_input, get_team_btn], justify="start", gap=1),
+    ])
+
+    return list_teams_btn, team_id_input, get_team_btn
+
+
+@app.cell
+def _(mo, json, fleet, list_teams_btn, fleet_success, fleet_error):
+    mo.stop(not list_teams_btn.value)
+
+    _status, _data = fleet("GET", "/api/v1/fleet/teams")
+
+    if _status == 200:
+        _teams = _data.get("teams", [])
+        if _teams:
+            _formatted = json.dumps(_teams, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {len(_teams)} teams"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No teams found.** Teams are a Fleet Premium feature.")
+    else:
+        _result = fleet_error(f"Failed to list teams (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, json, fleet, team_id_input, get_team_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_team_btn.value)
+    mo.stop(not team_id_input.value, fleet_tip("Enter a Team ID."))
+
+    _team_id = team_id_input.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/teams/{_team_id}")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Team {_team_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get team (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Create Team
+
+Create a new team. Teams are a Fleet Premium feature.
+""")
+
+
+@app.cell
+def _(mo):
+    create_team_name = mo.ui.text(placeholder="Engineering", label="Team Name", full_width=True)
+    create_team_description = mo.ui.text(placeholder="Engineering department hosts", label="Description (optional)", full_width=True)
+
+    create_team_btn = mo.ui.run_button(label="Create Team")
+
+    mo.vstack([
+        create_team_name,
+        create_team_description,
+        mo.hstack([create_team_btn], justify="start"),
+    ])
+
+    return create_team_name, create_team_description, create_team_btn
+
+
+@app.cell
+def _(mo, json, fleet, create_team_name, create_team_description, create_team_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not create_team_btn.value)
+    mo.stop(not create_team_name.value, fleet_tip("Enter a team name."))
+
+    _payload = {
+        "name": create_team_name.value.strip(),
+    }
+
+    if create_team_description.value:
+        _payload["description"] = create_team_description.value.strip()
+
+    _status, _data = fleet("POST", "/api/v1/fleet/teams", json_data=_payload)
+
+    if _status in (200, 201):
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Created team: {create_team_name.value}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to create team (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Update Team
+
+Update an existing team's name or description.
+""")
+
+
+@app.cell
+def _(mo):
+    update_team_id = mo.ui.text(placeholder="Team ID", label="Team ID to Update", full_width=True)
+    update_team_name = mo.ui.text(placeholder="New name (optional)", label="Name", full_width=True)
+    update_team_description = mo.ui.text(placeholder="New description (optional)", label="Description", full_width=True)
+
+    update_team_btn = mo.ui.run_button(label="Update Team")
+
+    mo.vstack([
+        update_team_id,
+        update_team_name,
+        update_team_description,
+        mo.hstack([update_team_btn], justify="start"),
+    ])
+
+    return update_team_id, update_team_name, update_team_description, update_team_btn
+
+
+@app.cell
+def _(mo, json, fleet, update_team_id, update_team_name, update_team_description, update_team_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not update_team_btn.value)
+    mo.stop(not update_team_id.value, fleet_tip("Enter a Team ID."))
+
+    _team_id = update_team_id.value.strip()
+    _payload = {}
+
+    if update_team_name.value:
+        _payload["name"] = update_team_name.value.strip()
+    if update_team_description.value:
+        _payload["description"] = update_team_description.value.strip()
+
+    if not _payload:
+        mo.stop(True, fleet_tip("Enter at least one field to update."))
+
+    _status, _data = fleet("PATCH", f"/api/v1/fleet/teams/{_team_id}", json_data=_payload)
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Updated team {_team_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to update team (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Add Users to Team
+
+Add users to a team by specifying their user IDs and roles.
+""")
+
+
+@app.cell
+def _(mo):
+    team_users_team_id = mo.ui.text(placeholder="Team ID", label="Team ID", full_width=True)
+    team_users_ids = mo.ui.text(
+        placeholder="1, 5, 12 (comma-separated user IDs)",
+        label="User IDs to Add",
+        full_width=True,
+    )
+    team_users_role = mo.ui.dropdown(
+        options={
+            "Observer": "observer",
+            "Observer+": "observer_plus",
+            "Maintainer": "maintainer",
+            "Admin": "admin",
+        },
+        value="Observer",
+        label="Role for Users",
+    )
+
+    add_team_users_btn = mo.ui.run_button(label="Add Users to Team")
+
+    mo.vstack([
+        team_users_team_id,
+        team_users_ids,
+        team_users_role,
+        mo.hstack([add_team_users_btn], justify="start"),
+    ])
+
+    return team_users_team_id, team_users_ids, team_users_role, add_team_users_btn
+
+
+@app.cell
+def _(mo, json, fleet, team_users_team_id, team_users_ids, team_users_role, add_team_users_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not add_team_users_btn.value)
+    mo.stop(not team_users_team_id.value, fleet_tip("Enter a Team ID."))
+    mo.stop(not team_users_ids.value, fleet_tip("Enter User IDs."))
+
+    _team_id = team_users_team_id.value.strip()
+    _user_ids = [int(uid.strip()) for uid in team_users_ids.value.split(",") if uid.strip().isdigit()]
+
+    if not _user_ids:
+        mo.stop(True, fleet_tip("Enter valid User IDs."))
+
+    _users = [{"id": uid, "role": team_users_role.value} for uid in _user_ids]
+    _payload = {"users": _users}
+
+    _status, _data = fleet("PATCH", f"/api/v1/fleet/teams/{_team_id}/users", json_data=_payload)
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Added {len(_user_ids)} user(s) to team {_team_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to add users to team (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Update Team Agent Options
+
+Configure osquery agent options for a specific team.
+""")
+
+
+@app.cell
+def _(mo):
+    agent_options_team_id = mo.ui.text(placeholder="Team ID", label="Team ID", full_width=True)
+    agent_options_json = mo.ui.text_area(
+        placeholder="""{
+  "config": {
+    "options": {
+      "logger_plugin": "tls",
+      "pack_delimiter": "/",
+      "distributed_interval": 10,
+      "disable_distributed": false
+    }
+  }
+}""",
+        label="Agent Options (JSON)",
+        full_width=True,
+        rows=10,
+    )
+
+    update_agent_options_btn = mo.ui.run_button(label="Update Agent Options")
+
+    mo.vstack([
+        agent_options_team_id,
+        agent_options_json,
+        mo.hstack([update_agent_options_btn], justify="start"),
+    ])
+
+    return agent_options_team_id, agent_options_json, update_agent_options_btn
+
+
+@app.cell
+def _(mo, json, fleet, agent_options_team_id, agent_options_json, update_agent_options_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not update_agent_options_btn.value)
+    mo.stop(not agent_options_team_id.value, fleet_tip("Enter a Team ID."))
+    mo.stop(not agent_options_json.value, fleet_tip("Enter agent options JSON."))
+
+    _team_id = agent_options_team_id.value.strip()
+
+    try:
+        _payload = json.loads(agent_options_json.value)
+    except json.JSONDecodeError as e:
+        mo.stop(True, fleet_error(f"Invalid JSON: {e}"))
+
+    _status, _data = fleet("POST", f"/api/v1/fleet/teams/{_team_id}/agent_options", json_data=_payload)
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Updated agent options for team {_team_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to update agent options (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Delete Team
+
+Delete a team. This action cannot be undone.
+""")
+
+
+@app.cell
+def _(mo):
+    delete_team_id_input = mo.ui.text(placeholder="Team ID", label="Team ID to Delete")
+    delete_team_btn = mo.ui.run_button(label="Delete Team", kind="danger")
+
+    mo.hstack([delete_team_id_input, delete_team_btn], justify="start", gap=1)
+
+    return delete_team_id_input, delete_team_btn
+
+
+@app.cell
+def _(mo, fleet, delete_team_id_input, delete_team_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not delete_team_btn.value)
+    mo.stop(not delete_team_id_input.value, fleet_tip("Enter a Team ID."))
+
+    _team_id = delete_team_id_input.value.strip()
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/teams/{_team_id}")
+
+    if _status == 200:
+        _result = fleet_success(f"Deleted team {_team_id}")
+    else:
+        _result = fleet_error(f"Failed to delete team (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
 ## Labels CRUD Operations
 
 [📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#labels)
@@ -706,6 +1228,8 @@ def _(httpx, fleet_url_input, api_token_input):
                 response = httpx.delete(full_url, headers=headers, timeout=15.0)
             elif method.upper() == "PATCH":
                 response = httpx.patch(full_url, headers=headers, json=json_data, timeout=15.0)
+            elif method.upper() == "PUT":
+                response = httpx.put(full_url, headers=headers, json=json_data, timeout=15.0)
             else:
                 return None, {"error": f"Unsupported method: {method}"}
 
@@ -1270,6 +1794,976 @@ def _(mo):
     mo.md("""
 ---
 
+## Setup Experience
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#setup-experience)
+
+Configure the macOS/iOS automated device enrollment (ADE) setup experience, including enrollment profiles, bootstrap packages, EULAs, and setup scripts.
+
+### Endpoints Overview
+
+| Category | Endpoint | Method | Description |
+|----------|----------|--------|-------------|
+| **Enrollment Profile** | `/mdm/apple/enrollment_profile` | POST | Update custom MDM setup enrollment profile |
+| | `/mdm/apple/enrollment_profile` | GET | Get custom MDM setup enrollment profile |
+| | `/mdm/apple/enrollment_profile` | DELETE | Delete custom MDM setup enrollment profile |
+| **OTA/Manual** | `/api/v1/fleet/enrollment_profiles/ota` | GET | Get Over-the-Air (OTA) enrollment profile |
+| | `/api/v1/fleet/enrollment_profiles/manual` | GET | Get manual enrollment profile |
+| **Bootstrap Package** | `/api/v1/fleet/bootstrap` | POST | Create/upload bootstrap package |
+| | `/api/v1/fleet/bootstrap/:team_id/metadata` | GET | Get bootstrap package metadata |
+| | `/api/v1/fleet/bootstrap/:team_id` | DELETE | Delete bootstrap package |
+| | `/api/v1/fleet/bootstrap` | GET | Download bootstrap package |
+| | `/api/v1/fleet/bootstrap/:team_id/summary` | GET | Get bootstrap package status summary |
+| **Setup Experience** | `/api/v1/fleet/setup_experience` | PATCH | Update setup experience settings |
+| **EULA** | `/api/v1/fleet/setup_experience/eula` | POST | Upload EULA |
+| | `/api/v1/fleet/setup_experience/eula/:token/metadata` | GET | Get EULA metadata |
+| | `/api/v1/fleet/setup_experience/eula/:token` | DELETE | Delete EULA |
+| | `/api/v1/fleet/setup_experience/eula/:token` | GET | Download EULA |
+| **Software** | `/api/v1/fleet/setup_experience/software` | GET | List setup experience software |
+| | `/api/v1/fleet/setup_experience/software` | PUT | Update setup experience software |
+| **Script** | `/api/v1/fleet/setup_experience/script` | POST | Create setup experience script |
+| | `/api/v1/fleet/setup_experience/script` | GET | Get/download setup experience script |
+| | `/api/v1/fleet/setup_experience/script` | DELETE | Delete setup experience script |
+""")
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Custom MDM Setup Enrollment Profile
+
+Manage the custom enrollment profile used during Automated Device Enrollment (ADE).
+""")
+
+
+@app.cell
+def _(mo):
+    enrollment_profile_team_id = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = no team filter)",
+    )
+
+    get_enrollment_profile_btn = mo.ui.run_button(label="Get Enrollment Profile")
+    delete_enrollment_profile_btn = mo.ui.run_button(label="Delete Enrollment Profile", kind="danger")
+
+    mo.vstack([
+        enrollment_profile_team_id,
+        mo.hstack([get_enrollment_profile_btn, delete_enrollment_profile_btn], justify="start", gap=1),
+    ])
+
+    return enrollment_profile_team_id, get_enrollment_profile_btn, delete_enrollment_profile_btn
+
+
+@app.cell
+def _(mo, json, fleet, enrollment_profile_team_id, get_enrollment_profile_btn, fleet_success, fleet_error):
+    mo.stop(not get_enrollment_profile_btn.value)
+
+    _team_param = f"?team_id={enrollment_profile_team_id.value}" if enrollment_profile_team_id.value > 0 else ""
+    _status, _data = fleet("GET", f"/mdm/apple/enrollment_profile{_team_param}")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = fleet_success("Enrollment Profile retrieved")
+        _result = mo.vstack([_result, mo.md(f"```json\n{_formatted}\n```")])
+    else:
+        _result = fleet_error(f"Failed to get enrollment profile (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, fleet, enrollment_profile_team_id, delete_enrollment_profile_btn, fleet_success, fleet_error):
+    mo.stop(not delete_enrollment_profile_btn.value)
+
+    _team_param = f"?team_id={enrollment_profile_team_id.value}" if enrollment_profile_team_id.value > 0 else ""
+    _status, _data = fleet("DELETE", f"/mdm/apple/enrollment_profile{_team_param}")
+
+    if _status == 200:
+        _result = fleet_success("Enrollment profile deleted")
+    else:
+        _result = fleet_error(f"Failed to delete enrollment profile (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+#### Update Enrollment Profile
+
+Upload a custom enrollment profile (mobileconfig file content).
+""")
+
+
+@app.cell
+def _(mo):
+    enrollment_profile_content = mo.ui.text_area(
+        placeholder="""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Your enrollment profile content -->
+</dict>
+</plist>""",
+        label="Enrollment Profile Content (mobileconfig XML)",
+        full_width=True,
+        rows=10,
+    )
+
+    update_enrollment_profile_team_id = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = no team)",
+    )
+
+    update_enrollment_profile_btn = mo.ui.run_button(label="Update Enrollment Profile")
+
+    mo.vstack([
+        enrollment_profile_content,
+        update_enrollment_profile_team_id,
+        mo.hstack([update_enrollment_profile_btn], justify="start"),
+    ])
+
+    return enrollment_profile_content, update_enrollment_profile_team_id, update_enrollment_profile_btn
+
+
+@app.cell
+def _(mo, httpx, fleet_url_input, api_token_input, enrollment_profile_content, update_enrollment_profile_team_id, update_enrollment_profile_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not update_enrollment_profile_btn.value)
+    mo.stop(not enrollment_profile_content.value, fleet_tip("Enter enrollment profile content."))
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+    _team_param = f"?team_id={update_enrollment_profile_team_id.value}" if update_enrollment_profile_team_id.value > 0 else ""
+
+    try:
+        _response = httpx.post(
+            f"{_url}/mdm/apple/enrollment_profile{_team_param}",
+            headers={"Authorization": f"Bearer {_token}"},
+            content=enrollment_profile_content.value.encode('utf-8'),
+            timeout=30.0,
+        )
+        _status = _response.status_code
+        _data = _response.json() if _response.text else {}
+    except Exception as e:
+        _status = 0
+        _data = {"error": str(e)}
+
+    if _status == 200:
+        _result = fleet_success("Enrollment profile updated successfully")
+    else:
+        _result = fleet_error(f"Failed to update enrollment profile (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Enrollment Profiles (OTA / Manual)
+
+Download Over-the-Air (OTA) or manual enrollment profiles for device enrollment.
+""")
+
+
+@app.cell
+def _(mo):
+    get_ota_profile_btn = mo.ui.run_button(label="Get OTA Enrollment Profile")
+    get_manual_profile_btn = mo.ui.run_button(label="Get Manual Enrollment Profile")
+
+    mo.hstack([get_ota_profile_btn, get_manual_profile_btn], justify="start", gap=1)
+
+    return get_ota_profile_btn, get_manual_profile_btn
+
+
+@app.cell
+def _(mo, httpx, fleet_url_input, api_token_input, get_ota_profile_btn, fleet_success, fleet_error):
+    mo.stop(not get_ota_profile_btn.value)
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+
+    try:
+        _response = httpx.get(
+            f"{_url}/api/v1/fleet/enrollment_profiles/ota",
+            headers={"Authorization": f"Bearer {_token}"},
+            timeout=30.0,
+        )
+        _status = _response.status_code
+        _content = _response.text
+    except Exception as e:
+        _status = 0
+        _content = str(e)
+
+    if _status == 200:
+        _download_btn = mo.download(
+            data=_content.encode("utf-8"),
+            filename="ota-enrollment.mobileconfig",
+            mimetype="application/x-apple-aspen-config",
+            label="Download OTA Profile",
+        )
+        _result = mo.vstack([
+            fleet_success("OTA enrollment profile retrieved"),
+            _download_btn,
+            mo.md(f"```xml\n{_content[:3000]}{'...' if len(_content) > 3000 else ''}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get OTA profile (status {_status}): {_content[:500]}")
+
+    _result
+
+
+@app.cell
+def _(mo, httpx, fleet_url_input, api_token_input, get_manual_profile_btn, fleet_success, fleet_error):
+    mo.stop(not get_manual_profile_btn.value)
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+
+    try:
+        _response = httpx.get(
+            f"{_url}/api/v1/fleet/enrollment_profiles/manual",
+            headers={"Authorization": f"Bearer {_token}"},
+            timeout=30.0,
+        )
+        _status = _response.status_code
+        _content = _response.text
+    except Exception as e:
+        _status = 0
+        _content = str(e)
+
+    if _status == 200:
+        _download_btn = mo.download(
+            data=_content.encode("utf-8"),
+            filename="manual-enrollment.mobileconfig",
+            mimetype="application/x-apple-aspen-config",
+            label="Download Manual Profile",
+        )
+        _result = mo.vstack([
+            fleet_success("Manual enrollment profile retrieved"),
+            _download_btn,
+            mo.md(f"```xml\n{_content[:3000]}{'...' if len(_content) > 3000 else ''}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get manual profile (status {_status}): {_content[:500]}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Bootstrap Package
+
+Manage bootstrap packages that are installed during macOS Setup Assistant.
+""")
+
+
+@app.cell
+def _(mo):
+    bootstrap_team_id = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = no team)",
+    )
+
+    get_bootstrap_metadata_btn = mo.ui.run_button(label="Get Metadata")
+    download_bootstrap_btn = mo.ui.run_button(label="Download Package")
+    get_bootstrap_status_btn = mo.ui.run_button(label="Get Status Summary")
+    delete_bootstrap_btn = mo.ui.run_button(label="Delete Package", kind="danger")
+
+    mo.vstack([
+        bootstrap_team_id,
+        mo.hstack([get_bootstrap_metadata_btn, download_bootstrap_btn, get_bootstrap_status_btn, delete_bootstrap_btn], justify="start", gap=1),
+    ])
+
+    return bootstrap_team_id, get_bootstrap_metadata_btn, download_bootstrap_btn, get_bootstrap_status_btn, delete_bootstrap_btn
+
+
+@app.cell
+def _(mo, json, fleet, bootstrap_team_id, get_bootstrap_metadata_btn, fleet_success, fleet_error):
+    mo.stop(not get_bootstrap_metadata_btn.value)
+
+    _team_id = bootstrap_team_id.value if bootstrap_team_id.value > 0 else 0
+    _status, _data = fleet("GET", f"/api/v1/fleet/bootstrap/{_team_id}/metadata")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success("Bootstrap package metadata"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get bootstrap metadata (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, httpx, fleet_url_input, api_token_input, bootstrap_team_id, download_bootstrap_btn, fleet_success, fleet_error):
+    mo.stop(not download_bootstrap_btn.value)
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+    _team_param = f"?team_id={bootstrap_team_id.value}" if bootstrap_team_id.value > 0 else ""
+
+    try:
+        _response = httpx.get(
+            f"{_url}/api/v1/fleet/bootstrap{_team_param}",
+            headers={"Authorization": f"Bearer {_token}"},
+            timeout=60.0,
+        )
+        _status = _response.status_code
+        _content = _response.content
+    except Exception as e:
+        _status = 0
+        _content = str(e).encode()
+
+    if _status == 200:
+        _download_btn = mo.download(
+            data=_content,
+            filename="bootstrap.pkg",
+            mimetype="application/octet-stream",
+            label="Download Bootstrap Package",
+        )
+        _result = mo.vstack([
+            fleet_success(f"Bootstrap package ready ({len(_content)} bytes)"),
+            _download_btn,
+        ])
+    else:
+        _result = fleet_error(f"Failed to download bootstrap (status {_status})")
+
+    _result
+
+
+@app.cell
+def _(mo, json, fleet, bootstrap_team_id, get_bootstrap_status_btn, fleet_success, fleet_error):
+    mo.stop(not get_bootstrap_status_btn.value)
+
+    _team_id = bootstrap_team_id.value if bootstrap_team_id.value > 0 else 0
+    _status, _data = fleet("GET", f"/api/v1/fleet/bootstrap/{_team_id}/summary")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success("Bootstrap package status summary"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get bootstrap status (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, fleet, bootstrap_team_id, delete_bootstrap_btn, fleet_success, fleet_error):
+    mo.stop(not delete_bootstrap_btn.value)
+
+    _team_id = bootstrap_team_id.value if bootstrap_team_id.value > 0 else 0
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/bootstrap/{_team_id}")
+
+    if _status == 200:
+        _result = fleet_success("Bootstrap package deleted")
+    else:
+        _result = fleet_error(f"Failed to delete bootstrap (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+#### Upload Bootstrap Package
+
+Upload a new bootstrap package (.pkg file). The package must be signed.
+""")
+
+
+@app.cell
+def _(mo):
+    bootstrap_upload_team_id = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = no team)",
+    )
+
+    bootstrap_file_path = mo.ui.text(
+        placeholder="/path/to/bootstrap.pkg",
+        label="Bootstrap Package File Path",
+        full_width=True,
+    )
+
+    upload_bootstrap_btn = mo.ui.run_button(label="Upload Bootstrap Package")
+
+    mo.vstack([
+        bootstrap_upload_team_id,
+        bootstrap_file_path,
+        mo.hstack([upload_bootstrap_btn], justify="start"),
+    ])
+
+    return bootstrap_upload_team_id, bootstrap_file_path, upload_bootstrap_btn
+
+
+@app.cell
+def _(mo, httpx, Path, fleet_url_input, api_token_input, bootstrap_upload_team_id, bootstrap_file_path, upload_bootstrap_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not upload_bootstrap_btn.value)
+    mo.stop(not bootstrap_file_path.value, fleet_tip("Enter the path to the bootstrap package file."))
+
+    _file_path = Path(bootstrap_file_path.value.strip())
+    if not _file_path.exists():
+        mo.stop(True, fleet_error(f"File not found: {_file_path}"))
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+
+    try:
+        with open(_file_path, "rb") as _f:
+            _file_content = _f.read()
+
+        _files = {
+            "package": (_file_path.name, _file_content, "application/octet-stream"),
+        }
+        _data_fields = {}
+        if bootstrap_upload_team_id.value > 0:
+            _data_fields["team_id"] = str(bootstrap_upload_team_id.value)
+
+        _response = httpx.post(
+            f"{_url}/api/v1/fleet/bootstrap",
+            headers={"Authorization": f"Bearer {_token}"},
+            files=_files,
+            data=_data_fields,
+            timeout=120.0,
+        )
+        _status = _response.status_code
+        _resp_data = _response.json() if _response.text else {}
+    except Exception as e:
+        _status = 0
+        _resp_data = {"error": str(e)}
+
+    if _status in (200, 201):
+        _result = fleet_success(f"Bootstrap package uploaded: {_file_path.name}")
+    else:
+        _result = fleet_error(f"Failed to upload bootstrap (status {_status}): {_resp_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Setup Experience Settings
+
+Update the setup experience configuration for a team.
+""")
+
+
+@app.cell
+def _(mo):
+    setup_exp_team_id = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = no team)",
+    )
+
+    setup_exp_await_config = mo.ui.checkbox(label="Enable await configuration (hold at Setup Assistant)")
+    setup_exp_release_manually = mo.ui.checkbox(label="Release device manually")
+
+    update_setup_exp_btn = mo.ui.run_button(label="Update Setup Experience")
+
+    mo.vstack([
+        setup_exp_team_id,
+        setup_exp_await_config,
+        setup_exp_release_manually,
+        mo.hstack([update_setup_exp_btn], justify="start"),
+    ])
+
+    return setup_exp_team_id, setup_exp_await_config, setup_exp_release_manually, update_setup_exp_btn
+
+
+@app.cell
+def _(mo, json, fleet, setup_exp_team_id, setup_exp_await_config, setup_exp_release_manually, update_setup_exp_btn, fleet_success, fleet_error):
+    mo.stop(not update_setup_exp_btn.value)
+
+    _team_param = f"?team_id={setup_exp_team_id.value}" if setup_exp_team_id.value > 0 else ""
+    _payload = {
+        "enable_end_user_authentication": setup_exp_await_config.value,
+        "enable_release_device_manually": setup_exp_release_manually.value,
+    }
+
+    _status, _data = fleet("PATCH", f"/api/v1/fleet/setup_experience{_team_param}", json_data=_payload)
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success("Setup experience updated"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to update setup experience (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### EULA Management
+
+Upload and manage End User License Agreements shown during device setup.
+""")
+
+
+@app.cell
+def _(mo):
+    eula_token_input = mo.ui.text(
+        placeholder="EULA token (from metadata)",
+        label="EULA Token",
+        full_width=True,
+    )
+
+    get_eula_metadata_btn = mo.ui.run_button(label="Get EULA Metadata")
+    download_eula_btn = mo.ui.run_button(label="Download EULA")
+    delete_eula_btn = mo.ui.run_button(label="Delete EULA", kind="danger")
+
+    mo.vstack([
+        eula_token_input,
+        mo.hstack([get_eula_metadata_btn, download_eula_btn, delete_eula_btn], justify="start", gap=1),
+    ])
+
+    return eula_token_input, get_eula_metadata_btn, download_eula_btn, delete_eula_btn
+
+
+@app.cell
+def _(mo, json, fleet, eula_token_input, get_eula_metadata_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_eula_metadata_btn.value)
+    mo.stop(not eula_token_input.value, fleet_tip("Enter an EULA token."))
+
+    _token = eula_token_input.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/setup_experience/eula/{_token}/metadata")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success("EULA metadata"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get EULA metadata (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, httpx, fleet_url_input, api_token_input, eula_token_input, download_eula_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not download_eula_btn.value)
+    mo.stop(not eula_token_input.value, fleet_tip("Enter an EULA token."))
+
+    _url = fleet_url_input.value.rstrip("/")
+    _api_token = api_token_input.value
+    _eula_token = eula_token_input.value.strip()
+
+    try:
+        _response = httpx.get(
+            f"{_url}/api/v1/fleet/setup_experience/eula/{_eula_token}",
+            headers={"Authorization": f"Bearer {_api_token}"},
+            timeout=30.0,
+        )
+        _status = _response.status_code
+        _content = _response.content
+    except Exception as e:
+        _status = 0
+        _content = str(e).encode()
+
+    if _status == 200:
+        _download_btn = mo.download(
+            data=_content,
+            filename="eula.pdf",
+            mimetype="application/pdf",
+            label="Download EULA File",
+        )
+        _result = mo.vstack([
+            fleet_success(f"EULA ready ({len(_content)} bytes)"),
+            _download_btn,
+        ])
+    else:
+        _result = fleet_error(f"Failed to download EULA (status {_status})")
+
+    _result
+
+
+@app.cell
+def _(mo, fleet, eula_token_input, delete_eula_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not delete_eula_btn.value)
+    mo.stop(not eula_token_input.value, fleet_tip("Enter an EULA token."))
+
+    _eula_token = eula_token_input.value.strip()
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/setup_experience/eula/{_eula_token}")
+
+    if _status == 200:
+        _result = fleet_success("EULA deleted")
+    else:
+        _result = fleet_error(f"Failed to delete EULA (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+#### Upload EULA
+
+Upload a new EULA file (PDF format recommended).
+""")
+
+
+@app.cell
+def _(mo):
+    eula_upload_team_id = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = no team)",
+    )
+
+    eula_file_path = mo.ui.text(
+        placeholder="/path/to/eula.pdf",
+        label="EULA File Path",
+        full_width=True,
+    )
+
+    upload_eula_btn = mo.ui.run_button(label="Upload EULA")
+
+    mo.vstack([
+        eula_upload_team_id,
+        eula_file_path,
+        mo.hstack([upload_eula_btn], justify="start"),
+    ])
+
+    return eula_upload_team_id, eula_file_path, upload_eula_btn
+
+
+@app.cell
+def _(mo, json, httpx, Path, fleet_url_input, api_token_input, eula_upload_team_id, eula_file_path, upload_eula_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not upload_eula_btn.value)
+    mo.stop(not eula_file_path.value, fleet_tip("Enter the path to the EULA file."))
+
+    _file_path = Path(eula_file_path.value.strip())
+    if not _file_path.exists():
+        mo.stop(True, fleet_error(f"File not found: {_file_path}"))
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+
+    try:
+        with open(_file_path, "rb") as _f:
+            _file_content = _f.read()
+
+        _files = {
+            "eula": (_file_path.name, _file_content, "application/pdf"),
+        }
+        _data_fields = {}
+        if eula_upload_team_id.value > 0:
+            _data_fields["team_id"] = str(eula_upload_team_id.value)
+
+        _response = httpx.post(
+            f"{_url}/api/v1/fleet/setup_experience/eula",
+            headers={"Authorization": f"Bearer {_token}"},
+            files=_files,
+            data=_data_fields,
+            timeout=60.0,
+        )
+        _status = _response.status_code
+        _resp_data = _response.json() if _response.text else {}
+    except Exception as e:
+        _status = 0
+        _resp_data = {"error": str(e)}
+
+    if _status in (200, 201):
+        _formatted = json.dumps(_resp_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"EULA uploaded: {_file_path.name}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to upload EULA (status {_status}): {_resp_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Setup Experience Software
+
+List and configure software to be installed during device setup.
+""")
+
+
+@app.cell
+def _(mo):
+    setup_sw_team_id = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = no team)",
+    )
+
+    list_setup_sw_btn = mo.ui.run_button(label="List Setup Experience Software")
+
+    mo.vstack([
+        setup_sw_team_id,
+        mo.hstack([list_setup_sw_btn], justify="start"),
+    ])
+
+    return setup_sw_team_id, list_setup_sw_btn
+
+
+@app.cell
+def _(mo, json, fleet, setup_sw_team_id, list_setup_sw_btn, fleet_success, fleet_error):
+    mo.stop(not list_setup_sw_btn.value)
+
+    _team_param = f"?team_id={setup_sw_team_id.value}" if setup_sw_team_id.value > 0 else ""
+    _status, _data = fleet("GET", f"/api/v1/fleet/setup_experience/software{_team_param}")
+
+    if _status == 200:
+        _software = _data.get("software", [])
+        if _software:
+            _formatted = json.dumps(_software, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {len(_software)} setup experience software item(s)"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No setup experience software configured.**")
+    else:
+        _result = fleet_error(f"Failed to list setup software (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+#### Update Setup Experience Software
+
+Add or remove software from the setup experience. Provide a comma-separated list of software title IDs.
+""")
+
+
+@app.cell
+def _(mo):
+    update_setup_sw_team_id = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = no team)",
+    )
+
+    setup_sw_title_ids = mo.ui.text(
+        placeholder="1, 5, 12 (comma-separated software title IDs)",
+        label="Software Title IDs to include",
+        full_width=True,
+    )
+
+    update_setup_sw_btn = mo.ui.run_button(label="Update Setup Experience Software")
+
+    mo.vstack([
+        update_setup_sw_team_id,
+        setup_sw_title_ids,
+        mo.hstack([update_setup_sw_btn], justify="start"),
+    ])
+
+    return update_setup_sw_team_id, setup_sw_title_ids, update_setup_sw_btn
+
+
+@app.cell
+def _(mo, json, fleet, update_setup_sw_team_id, setup_sw_title_ids, update_setup_sw_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not update_setup_sw_btn.value)
+
+    # Parse software title IDs
+    _sw_ids = []
+    if setup_sw_title_ids.value.strip():
+        _sw_ids = [int(sid.strip()) for sid in setup_sw_title_ids.value.split(",") if sid.strip().isdigit()]
+
+    _team_param = f"?team_id={update_setup_sw_team_id.value}" if update_setup_sw_team_id.value > 0 else ""
+    _payload = {"software_title_ids": _sw_ids}
+
+    _status, _data = fleet("PUT", f"/api/v1/fleet/setup_experience/software{_team_param}", json_data=_payload)
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Setup experience software updated ({len(_sw_ids)} items)"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to update setup software (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Setup Experience Script
+
+Manage scripts that run during device setup.
+""")
+
+
+@app.cell
+def _(mo):
+    setup_script_team_id = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = no team)",
+    )
+
+    get_setup_script_btn = mo.ui.run_button(label="Get Setup Script")
+    delete_setup_script_btn = mo.ui.run_button(label="Delete Setup Script", kind="danger")
+
+    mo.vstack([
+        setup_script_team_id,
+        mo.hstack([get_setup_script_btn, delete_setup_script_btn], justify="start", gap=1),
+    ])
+
+    return setup_script_team_id, get_setup_script_btn, delete_setup_script_btn
+
+
+@app.cell
+def _(mo, httpx, fleet_url_input, api_token_input, setup_script_team_id, get_setup_script_btn, fleet_success, fleet_error):
+    mo.stop(not get_setup_script_btn.value)
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+    _team_param = f"?team_id={setup_script_team_id.value}" if setup_script_team_id.value > 0 else ""
+
+    try:
+        _response = httpx.get(
+            f"{_url}/api/v1/fleet/setup_experience/script{_team_param}",
+            headers={"Authorization": f"Bearer {_token}"},
+            timeout=30.0,
+        )
+        _status = _response.status_code
+        _content = _response.text
+    except Exception as e:
+        _status = 0
+        _content = str(e)
+
+    if _status == 200:
+        _download_btn = mo.download(
+            data=_content.encode("utf-8"),
+            filename="setup_script.sh",
+            mimetype="text/plain",
+            label="Download Script",
+        )
+        _result = mo.vstack([
+            fleet_success("Setup experience script retrieved"),
+            _download_btn,
+            mo.md(f"```bash\n{_content[:5000]}{'...' if len(_content) > 5000 else ''}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get setup script (status {_status}): {_content[:500]}")
+
+    _result
+
+
+@app.cell
+def _(mo, fleet, setup_script_team_id, delete_setup_script_btn, fleet_success, fleet_error):
+    mo.stop(not delete_setup_script_btn.value)
+
+    _team_param = f"?team_id={setup_script_team_id.value}" if setup_script_team_id.value > 0 else ""
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/setup_experience/script{_team_param}")
+
+    if _status == 200:
+        _result = fleet_success("Setup experience script deleted")
+    else:
+        _result = fleet_error(f"Failed to delete setup script (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+#### Create Setup Experience Script
+
+Upload a new setup experience script.
+""")
+
+
+@app.cell
+def _(mo):
+    create_setup_script_team_id = mo.ui.number(
+        start=0, stop=999999, step=1, value=0,
+        label="Team ID (0 = no team)",
+    )
+
+    setup_script_name = mo.ui.text(
+        placeholder="setup_script.sh",
+        label="Script Name",
+        full_width=True,
+    )
+
+    setup_script_content = mo.ui.text_area(
+        placeholder="""#!/bin/bash
+# Setup experience script
+echo "Setting up device..."
+# Your setup commands here
+exit 0""",
+        label="Script Content",
+        full_width=True,
+        rows=12,
+    )
+
+    create_setup_script_btn = mo.ui.run_button(label="Create Setup Script")
+
+    mo.vstack([
+        create_setup_script_team_id,
+        setup_script_name,
+        setup_script_content,
+        mo.hstack([create_setup_script_btn], justify="start"),
+    ])
+
+    return create_setup_script_team_id, setup_script_name, setup_script_content, create_setup_script_btn
+
+
+@app.cell
+def _(mo, json, httpx, fleet_url_input, api_token_input, create_setup_script_team_id, setup_script_name, setup_script_content, create_setup_script_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not create_setup_script_btn.value)
+    mo.stop(not setup_script_content.value, fleet_tip("Enter script content."))
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+    _name = setup_script_name.value.strip() if setup_script_name.value else "setup_script.sh"
+
+    try:
+        _files = {
+            "script": (_name, setup_script_content.value.encode('utf-8'), "text/plain"),
+        }
+        _data_fields = {}
+        if create_setup_script_team_id.value > 0:
+            _data_fields["team_id"] = str(create_setup_script_team_id.value)
+
+        _response = httpx.post(
+            f"{_url}/api/v1/fleet/setup_experience/script",
+            headers={"Authorization": f"Bearer {_token}"},
+            files=_files,
+            data=_data_fields,
+            timeout=30.0,
+        )
+        _status = _response.status_code
+        _resp_data = _response.json() if _response.text else {}
+    except Exception as e:
+        _status = 0
+        _resp_data = {"error": str(e)}
+
+    if _status in (200, 201):
+        _formatted = json.dumps(_resp_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Setup experience script created: {_name}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to create setup script (status {_status}): {_resp_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
 ## Certificate Authorities
 
 [📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#list-certificate-authorities-cas)
@@ -1779,11 +3273,8 @@ The subject name field supports Fleet variables that are replaced with device/us
 | `$FLEET_VAR_HOST_UUID` | Unique host identifier |
 | `$FLEET_VAR_HOST_HARDWARE_SERIAL` | Device hardware serial number |
 | `$FLEET_VAR_HOST_END_USER_IDP_USERNAME` | End user's IDP username (typically email) |
-| `$FLEET_VAR_HOST_END_USER_IDP_USERNAME_LOCAL_PART` | Local part of IDP username (before @) |
-| `$FLEET_VAR_HOST_END_USER_IDP_FULL_NAME` | End user's full name from IDP |
-| `$FLEET_VAR_HOST_END_USER_IDP_DEPARTMENT` | End user's department from IDP |
-| `$FLEET_VAR_HOST_END_USER_IDP_GROUPS` | Comma-separated IDP group memberships |
-| `$FLEET_VAR_HOST_PLATFORM` | Device platform (darwin, windows, linux) |
+
+<div class="fleet-note"><strong>Only these 3 variables are supported in certificate templates.</strong> Other <code>$FLEET_VAR_*</code> variables (like IDP_FULL_NAME, IDP_DEPARTMENT) are only available in MDM profiles. Custom <code>$FLEET_SECRET_*</code> variables are not supported in certificate subject names.</div>
 
 **Subject Name Format:** Uses DN (Distinguished Name) format: `/KEY=value/KEY=value`
 
@@ -1793,24 +3284,20 @@ Common DN keys: `CN` (Common Name), `OU` (Organizational Unit), `O` (Organizatio
 
 @app.cell
 def _(mo):
-    # Subject name builder - Fleet variables and common templates
-    FLEET_VARS = {
+    # Subject name builder - Only 3 Fleet variables are supported in certificate templates
+    # See: fleet/server/service/certificate_templates.go
+    CERT_TEMPLATE_VARS = {
         "Host UUID": "$FLEET_VAR_HOST_UUID",
         "Hardware Serial": "$FLEET_VAR_HOST_HARDWARE_SERIAL",
-        "IDP Username": "$FLEET_VAR_HOST_END_USER_IDP_USERNAME",
-        "IDP Username (local part)": "$FLEET_VAR_HOST_END_USER_IDP_USERNAME_LOCAL_PART",
-        "IDP Full Name": "$FLEET_VAR_HOST_END_USER_IDP_FULL_NAME",
-        "IDP Department": "$FLEET_VAR_HOST_END_USER_IDP_DEPARTMENT",
-        "IDP Groups": "$FLEET_VAR_HOST_END_USER_IDP_GROUPS",
-        "Host Platform": "$FLEET_VAR_HOST_PLATFORM",
+        "IDP Username (email)": "$FLEET_VAR_HOST_END_USER_IDP_USERNAME",
     }
 
     SUBJECT_TEMPLATES = {
         "WiFi Certificate (User + Device)": "/CN=$FLEET_VAR_HOST_END_USER_IDP_USERNAME/OU=$FLEET_VAR_HOST_UUID/ST=$FLEET_VAR_HOST_HARDWARE_SERIAL",
         "VPN Certificate (User + UUID)": "/CN=$FLEET_VAR_HOST_END_USER_IDP_USERNAME/OU=$FLEET_VAR_HOST_UUID",
         "Device Only (Serial + UUID)": "/CN=$FLEET_VAR_HOST_HARDWARE_SERIAL/OU=$FLEET_VAR_HOST_UUID",
-        "User Email Only": "/CN=$FLEET_VAR_HOST_END_USER_IDP_USERNAME",
-        "Full User Info": "/CN=$FLEET_VAR_HOST_END_USER_IDP_FULL_NAME/OU=$FLEET_VAR_HOST_END_USER_IDP_DEPARTMENT/O=$FLEET_VAR_HOST_END_USER_IDP_USERNAME",
+        "User Identity Only": "/CN=$FLEET_VAR_HOST_END_USER_IDP_USERNAME",
+        "Device Identity Only": "/CN=$FLEET_VAR_HOST_HARDWARE_SERIAL",
         "Custom (build below)": "",
     }
 
@@ -1821,21 +3308,21 @@ def _(mo):
         label="Quick Template",
     )
 
-    # DN components for custom builder
+    # DN components for custom builder - only 3 variables supported
     dn_cn_var = mo.ui.dropdown(
-        options={"(none)": "", **FLEET_VARS},
-        value="IDP Username",
+        options={"(none)": "", **CERT_TEMPLATE_VARS},
+        value="IDP Username (email)",
         label="CN (Common Name)",
     )
 
     dn_ou_var = mo.ui.dropdown(
-        options={"(none)": "", **FLEET_VARS},
+        options={"(none)": "", **CERT_TEMPLATE_VARS},
         value="Host UUID",
         label="OU (Org Unit)",
     )
 
     dn_o_var = mo.ui.dropdown(
-        options={"(none)": "", "(custom text)": "CUSTOM", **FLEET_VARS},
+        options={"(none)": "", "(custom text)": "CUSTOM", **CERT_TEMPLATE_VARS},
         value="(none)",
         label="O (Organization)",
     )
@@ -1843,12 +3330,12 @@ def _(mo):
     dn_o_custom_text = mo.ui.text(placeholder="Custom org name", label="Custom O")
 
     dn_st_var = mo.ui.dropdown(
-        options={"(none)": "", **FLEET_VARS},
+        options={"(none)": "", **CERT_TEMPLATE_VARS},
         value="(none)",
         label="ST (State/Extra)",
     )
 
-    return FLEET_VARS, SUBJECT_TEMPLATES, subject_template_dropdown, dn_cn_var, dn_ou_var, dn_o_var, dn_o_custom_text, dn_st_var
+    return CERT_TEMPLATE_VARS, SUBJECT_TEMPLATES, subject_template_dropdown, dn_cn_var, dn_ou_var, dn_o_var, dn_o_custom_text, dn_st_var
 
 
 @app.cell
@@ -2477,6 +3964,2116 @@ def _(mo, json, fleet, webhook_type_dropdown, webhook_enabled, webhook_url, host
         ])
     else:
         _result = fleet_error(f"Failed to update webhook (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
+## Queries
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#queries)
+
+Manage saved queries and run live queries against hosts.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/fleet/queries` | GET | List all queries |
+| `/api/v1/fleet/queries/:id` | GET | Get query details |
+| `/api/v1/fleet/queries/:id/report` | GET | Get query report |
+| `/api/v1/fleet/hosts/:id/queries/:query_id` | GET | Get host's query report |
+| `/api/v1/fleet/queries` | POST | Create query |
+| `/api/v1/fleet/queries/:id` | PATCH | Update query |
+| `/api/v1/fleet/queries/:name` | DELETE | Delete query by name |
+| `/api/v1/fleet/queries/id/:id` | DELETE | Delete query by ID |
+| `/api/v1/fleet/queries/delete` | POST | Delete multiple queries |
+| `/api/v1/fleet/queries/run` | POST | Run live query |
+""")
+
+
+@app.cell
+def _(mo):
+    list_queries_btn = mo.ui.run_button(label="List Queries")
+    query_id_input = mo.ui.text(placeholder="Query ID", label="Query ID")
+    get_query_btn = mo.ui.run_button(label="Get Query")
+    get_query_report_btn = mo.ui.run_button(label="Get Report")
+
+    mo.vstack([
+        mo.hstack([list_queries_btn], justify="start"),
+        mo.hstack([query_id_input, get_query_btn, get_query_report_btn], justify="start", gap=1),
+    ])
+
+    return list_queries_btn, query_id_input, get_query_btn, get_query_report_btn
+
+
+@app.cell
+def _(mo, json, fleet, list_queries_btn, fleet_success, fleet_error):
+    mo.stop(not list_queries_btn.value)
+
+    _status, _data = fleet("GET", "/api/v1/fleet/queries")
+
+    if _status == 200:
+        _queries = _data.get("queries", [])
+        if _queries:
+            _formatted = json.dumps(_queries, indent=2)
+            if len(_formatted) > 5000:
+                _formatted = _formatted[:5000] + "\n... (truncated)"
+            _result = mo.vstack([
+                fleet_success(f"Found {len(_queries)} queries"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No queries found.**")
+    else:
+        _result = fleet_error(f"Failed to list queries (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, json, fleet, query_id_input, get_query_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_query_btn.value)
+    mo.stop(not query_id_input.value, fleet_tip("Enter a Query ID."))
+
+    _query_id = query_id_input.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/queries/{_query_id}")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Query {_query_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get query (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, json, fleet, query_id_input, get_query_report_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_query_report_btn.value)
+    mo.stop(not query_id_input.value, fleet_tip("Enter a Query ID."))
+
+    _query_id = query_id_input.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/queries/{_query_id}/report")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        if len(_formatted) > 8000:
+            _formatted = _formatted[:8000] + "\n... (truncated)"
+        _result = mo.vstack([
+            fleet_success(f"Query Report for {_query_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get query report (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Host's Query Report
+
+Get query results for a specific host.
+""")
+
+
+@app.cell
+def _(mo):
+    host_query_host_id = mo.ui.text(placeholder="Host ID", label="Host ID")
+    host_query_query_id = mo.ui.text(placeholder="Query ID", label="Query ID")
+    get_host_query_report_btn = mo.ui.run_button(label="Get Host Query Report")
+
+    mo.hstack([host_query_host_id, host_query_query_id, get_host_query_report_btn], justify="start", gap=1)
+
+    return host_query_host_id, host_query_query_id, get_host_query_report_btn
+
+
+@app.cell
+def _(mo, json, fleet, host_query_host_id, host_query_query_id, get_host_query_report_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_host_query_report_btn.value)
+    mo.stop(not host_query_host_id.value, fleet_tip("Enter a Host ID."))
+    mo.stop(not host_query_query_id.value, fleet_tip("Enter a Query ID."))
+
+    _host_id = host_query_host_id.value.strip()
+    _query_id = host_query_query_id.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/hosts/{_host_id}/queries/{_query_id}")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Query {_query_id} results for Host {_host_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get host query report (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Create Query
+
+Create a new saved query.
+""")
+
+
+@app.cell
+def _(mo):
+    create_query_name = mo.ui.text(placeholder="Query Name", label="Name", full_width=True)
+    create_query_sql = mo.ui.text_area(
+        placeholder="SELECT * FROM system_info;",
+        label="SQL Query",
+        full_width=True,
+        rows=6,
+    )
+    create_query_description = mo.ui.text(placeholder="Query description (optional)", label="Description", full_width=True)
+    create_query_interval = mo.ui.number(start=0, stop=604800, step=60, value=0, label="Interval (seconds, 0 = manual)")
+    create_query_observer_can_run = mo.ui.checkbox(label="Observer can run")
+
+    create_query_btn = mo.ui.run_button(label="Create Query")
+
+    mo.vstack([
+        create_query_name,
+        create_query_sql,
+        create_query_description,
+        mo.hstack([create_query_interval, create_query_observer_can_run], gap=2),
+        mo.hstack([create_query_btn], justify="start"),
+    ])
+
+    return create_query_name, create_query_sql, create_query_description, create_query_interval, create_query_observer_can_run, create_query_btn
+
+
+@app.cell
+def _(mo, json, fleet, create_query_name, create_query_sql, create_query_description, create_query_interval, create_query_observer_can_run, create_query_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not create_query_btn.value)
+    mo.stop(not create_query_name.value, fleet_tip("Enter a query name."))
+    mo.stop(not create_query_sql.value, fleet_tip("Enter the SQL query."))
+
+    _payload = {
+        "name": create_query_name.value.strip(),
+        "query": create_query_sql.value.strip(),
+        "observer_can_run": create_query_observer_can_run.value,
+    }
+
+    if create_query_description.value:
+        _payload["description"] = create_query_description.value.strip()
+    if create_query_interval.value > 0:
+        _payload["interval"] = create_query_interval.value
+
+    _status, _data = fleet("POST", "/api/v1/fleet/queries", json_data=_payload)
+
+    if _status in (200, 201):
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Created query: {create_query_name.value}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to create query (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Update Query
+
+Update an existing query.
+""")
+
+
+@app.cell
+def _(mo):
+    update_query_id = mo.ui.text(placeholder="Query ID", label="Query ID to Update", full_width=True)
+    update_query_name = mo.ui.text(placeholder="New name (optional)", label="Name", full_width=True)
+    update_query_sql = mo.ui.text_area(placeholder="New SQL (optional)", label="SQL Query", full_width=True, rows=4)
+    update_query_description = mo.ui.text(placeholder="New description (optional)", label="Description", full_width=True)
+
+    update_query_btn = mo.ui.run_button(label="Update Query")
+
+    mo.vstack([
+        update_query_id,
+        update_query_name,
+        update_query_sql,
+        update_query_description,
+        mo.hstack([update_query_btn], justify="start"),
+    ])
+
+    return update_query_id, update_query_name, update_query_sql, update_query_description, update_query_btn
+
+
+@app.cell
+def _(mo, json, fleet, update_query_id, update_query_name, update_query_sql, update_query_description, update_query_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not update_query_btn.value)
+    mo.stop(not update_query_id.value, fleet_tip("Enter a Query ID."))
+
+    _query_id = update_query_id.value.strip()
+    _payload = {}
+
+    if update_query_name.value:
+        _payload["name"] = update_query_name.value.strip()
+    if update_query_sql.value:
+        _payload["query"] = update_query_sql.value.strip()
+    if update_query_description.value:
+        _payload["description"] = update_query_description.value.strip()
+
+    if not _payload:
+        mo.stop(True, fleet_tip("Enter at least one field to update."))
+
+    _status, _data = fleet("PATCH", f"/api/v1/fleet/queries/{_query_id}", json_data=_payload)
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Updated query {_query_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to update query (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Delete Query
+
+Delete a query by ID or name.
+""")
+
+
+@app.cell
+def _(mo):
+    delete_query_id_input = mo.ui.text(placeholder="Query ID", label="Query ID")
+    delete_query_by_id_btn = mo.ui.run_button(label="Delete by ID", kind="danger")
+
+    delete_query_name_input = mo.ui.text(placeholder="Query Name", label="Query Name")
+    delete_query_by_name_btn = mo.ui.run_button(label="Delete by Name", kind="danger")
+
+    mo.vstack([
+        mo.hstack([delete_query_id_input, delete_query_by_id_btn], justify="start", gap=1),
+        mo.hstack([delete_query_name_input, delete_query_by_name_btn], justify="start", gap=1),
+    ])
+
+    return delete_query_id_input, delete_query_by_id_btn, delete_query_name_input, delete_query_by_name_btn
+
+
+@app.cell
+def _(mo, fleet, delete_query_id_input, delete_query_by_id_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not delete_query_by_id_btn.value)
+    mo.stop(not delete_query_id_input.value, fleet_tip("Enter a Query ID."))
+
+    _query_id = delete_query_id_input.value.strip()
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/queries/id/{_query_id}")
+
+    if _status == 200:
+        _result = fleet_success(f"Deleted query ID {_query_id}")
+    else:
+        _result = fleet_error(f"Failed to delete query (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, fleet, delete_query_name_input, delete_query_by_name_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not delete_query_by_name_btn.value)
+    mo.stop(not delete_query_name_input.value, fleet_tip("Enter a Query Name."))
+
+    _query_name = delete_query_name_input.value.strip()
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/queries/{_query_name}")
+
+    if _status == 200:
+        _result = fleet_success(f"Deleted query: {_query_name}")
+    else:
+        _result = fleet_error(f"Failed to delete query (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Run Live Query
+
+Execute a query in real-time against selected hosts.
+""")
+
+
+@app.cell
+def _(mo):
+    live_query_sql = mo.ui.text_area(
+        placeholder="SELECT * FROM system_info;",
+        label="SQL Query",
+        full_width=True,
+        rows=4,
+    )
+    live_query_host_ids = mo.ui.text(
+        placeholder="1, 5, 12 (comma-separated host IDs)",
+        label="Host IDs",
+        full_width=True,
+    )
+    run_live_query_btn = mo.ui.run_button(label="Run Live Query")
+
+    mo.vstack([
+        live_query_sql,
+        live_query_host_ids,
+        mo.hstack([run_live_query_btn], justify="start"),
+    ])
+
+    return live_query_sql, live_query_host_ids, run_live_query_btn
+
+
+@app.cell
+def _(mo, json, fleet, live_query_sql, live_query_host_ids, run_live_query_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not run_live_query_btn.value)
+    mo.stop(not live_query_sql.value, fleet_tip("Enter a SQL query."))
+    mo.stop(not live_query_host_ids.value, fleet_tip("Enter at least one Host ID."))
+
+    _host_ids = [int(hid.strip()) for hid in live_query_host_ids.value.split(",") if hid.strip().isdigit()]
+    if not _host_ids:
+        mo.stop(True, fleet_tip("Enter valid Host IDs."))
+
+    _payload = {
+        "query": live_query_sql.value.strip(),
+        "selected": {"hosts": _host_ids},
+    }
+
+    _status, _data = fleet("POST", "/api/v1/fleet/queries/run", json_data=_payload)
+
+    if _status in (200, 201, 202):
+        _formatted = json.dumps(_data, indent=2)
+        if len(_formatted) > 8000:
+            _formatted = _formatted[:8000] + "\n... (truncated)"
+        _result = mo.vstack([
+            fleet_success("Live query executed"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to run live query (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
+## Scripts
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#scripts)
+
+Manage and execute scripts on hosts.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/fleet/scripts/run` | POST | Run script on a host |
+| `/api/v1/fleet/scripts/results/:execution_id` | GET | Get script result |
+| `/api/v1/fleet/scripts/run/batch` | POST | Batch-run script on multiple hosts |
+| `/api/v1/fleet/scripts/batch` | GET | List batch executions |
+| `/api/v1/fleet/scripts/batch/:batch_execution_id` | GET | Get batch execution details |
+| `/api/v1/fleet/scripts/batch/:batch_execution_id/host-results` | GET | Get host results in batch |
+| `/api/v1/fleet/scripts/batch/:batch_execution_id/cancel` | POST | Cancel batch execution |
+| `/api/v1/fleet/scripts` | POST | Create/upload script |
+| `/api/v1/fleet/scripts/:id` | PATCH | Update script |
+| `/api/v1/fleet/scripts/:id` | DELETE | Delete script |
+| `/api/v1/fleet/scripts` | GET | List scripts |
+| `/api/v1/fleet/hosts/:id/scripts` | GET | List host's scripts |
+| `/api/v1/fleet/scripts/:id` | GET | Get or download script |
+""")
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Run Script on Host
+
+Execute a script on a single host.
+""")
+
+
+@app.cell
+def _(mo):
+    run_script_host_id = mo.ui.text(placeholder="Host ID", label="Host ID", full_width=True)
+    run_script_id = mo.ui.text(placeholder="Script ID (use saved script)", label="Script ID (optional)", full_width=True)
+    run_script_content = mo.ui.text_area(
+        placeholder="""#!/bin/bash
+echo "Hello from Fleet!"
+""",
+        label="Script Content (if not using Script ID)",
+        full_width=True,
+        rows=6,
+    )
+    run_script_btn = mo.ui.run_button(label="Run Script")
+
+    mo.vstack([
+        run_script_host_id,
+        run_script_id,
+        run_script_content,
+        mo.hstack([run_script_btn], justify="start"),
+    ])
+
+    return run_script_host_id, run_script_id, run_script_content, run_script_btn
+
+
+@app.cell
+def _(mo, json, fleet, run_script_host_id, run_script_id, run_script_content, run_script_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not run_script_btn.value)
+    mo.stop(not run_script_host_id.value, fleet_tip("Enter a Host ID."))
+    mo.stop(not run_script_id.value and not run_script_content.value, fleet_tip("Enter a Script ID or script content."))
+
+    _payload = {
+        "host_id": int(run_script_host_id.value.strip()),
+    }
+
+    if run_script_id.value:
+        _payload["script_id"] = int(run_script_id.value.strip())
+    else:
+        _payload["script_contents"] = run_script_content.value
+
+    _status, _data = fleet("POST", "/api/v1/fleet/scripts/run", json_data=_payload)
+
+    if _status in (200, 201, 202):
+        _formatted = json.dumps(_data, indent=2)
+        _execution_id = _data.get("execution_id", "N/A")
+        _result = mo.vstack([
+            fleet_success(f"Script queued - Execution ID: {_execution_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to run script (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Get Script Result
+
+Retrieve the result of a script execution.
+""")
+
+
+@app.cell
+def _(mo):
+    script_execution_id = mo.ui.text(placeholder="Execution ID", label="Execution ID", full_width=True)
+    get_script_result_btn = mo.ui.run_button(label="Get Script Result")
+
+    mo.hstack([script_execution_id, get_script_result_btn], justify="start", gap=1)
+
+    return script_execution_id, get_script_result_btn
+
+
+@app.cell
+def _(mo, json, fleet, script_execution_id, get_script_result_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_script_result_btn.value)
+    mo.stop(not script_execution_id.value, fleet_tip("Enter an Execution ID."))
+
+    _exec_id = script_execution_id.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/scripts/results/{_exec_id}")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Script result for execution {_exec_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get script result (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Batch Run Script
+
+Run a script asynchronously on multiple hosts. Requires Fleet Premium.
+
+**Two ways to target hosts:**
+1. **By Host IDs**: Specify exact host IDs (comma-separated)
+2. **By Filters**: Use `team_id` filter to target all hosts in a team (leave Host IDs empty)
+
+**Note:** `team_id=0` targets hosts with **no team** assigned.
+""")
+
+
+@app.cell
+def _(mo):
+    batch_script_id = mo.ui.text(placeholder="Script ID", label="Script ID", full_width=True)
+    batch_host_ids = mo.ui.text(
+        placeholder="1, 5, 12 (comma-separated, OR leave empty to use team filter)",
+        label="Host IDs (optional if using team filter)",
+        full_width=True,
+    )
+    batch_use_filter = mo.ui.checkbox(label="Use Team Filter (instead of Host IDs)")
+    batch_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID for filter (0 = hosts with no team)")
+    run_batch_script_btn = mo.ui.run_button(label="Run Batch Script")
+
+    mo.vstack([
+        batch_script_id,
+        batch_host_ids,
+        batch_use_filter,
+        batch_team_id,
+        mo.hstack([run_batch_script_btn], justify="start"),
+    ])
+
+    return batch_script_id, batch_host_ids, batch_use_filter, batch_team_id, run_batch_script_btn
+
+
+@app.cell
+def _(mo, json, fleet, batch_script_id, batch_host_ids, batch_use_filter, batch_team_id, run_batch_script_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not run_batch_script_btn.value)
+    mo.stop(not batch_script_id.value, fleet_tip("Enter a Script ID."))
+
+    _payload = {
+        "script_id": int(batch_script_id.value.strip()),
+    }
+
+    if batch_use_filter.value:
+        # Use team filter - targets all hosts in a team (or no team if team_id=0)
+        _payload["filters"] = {"team_id": batch_team_id.value}
+        _target_desc = f"hosts in team {batch_team_id.value}" if batch_team_id.value > 0 else "hosts with no team"
+    else:
+        # Use explicit host IDs
+        mo.stop(not batch_host_ids.value, fleet_tip("Enter Host IDs or check 'Use Team Filter'."))
+        _host_ids = [int(hid.strip()) for hid in batch_host_ids.value.split(",") if hid.strip().isdigit()]
+        if not _host_ids:
+            mo.stop(True, fleet_tip("Enter valid Host IDs."))
+        _payload["host_ids"] = _host_ids
+        _target_desc = f"{len(_host_ids)} hosts"
+
+    _status, _data = fleet("POST", "/api/v1/fleet/scripts/run/batch", json_data=_payload)
+
+    if _status in (200, 201, 202):
+        _formatted = json.dumps(_data, indent=2)
+        _batch_id = _data.get("batch_execution_id", "N/A")
+        _result = mo.vstack([
+            fleet_success(f"Batch script started on {_target_desc} - Batch ID: {_batch_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to run batch script (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Batch Script Management
+
+List, get details, or cancel batch script executions.
+""")
+
+
+@app.cell
+def _(mo):
+    batch_mgmt_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    list_batch_scripts_btn = mo.ui.run_button(label="List Batch Executions")
+    batch_exec_id_input = mo.ui.text(placeholder="Batch Execution ID", label="Batch Execution ID")
+    get_batch_script_btn = mo.ui.run_button(label="Get Batch Details")
+    batch_host_status = mo.ui.dropdown(
+        options={
+            "Pending": "pending",
+            "Ran (success)": "ran",
+            "Errored": "errored",
+            "Canceled": "canceled",
+            "Incompatible": "incompatible",
+        },
+        value="Pending",
+        label="Host Status Filter",
+    )
+    get_batch_hosts_btn = mo.ui.run_button(label="Get Host Results")
+    cancel_batch_script_btn = mo.ui.run_button(label="Cancel Batch", kind="danger")
+
+    mo.vstack([
+        batch_mgmt_team_id,
+        mo.hstack([list_batch_scripts_btn], justify="start"),
+        batch_exec_id_input,
+        mo.hstack([get_batch_script_btn, batch_host_status, get_batch_hosts_btn, cancel_batch_script_btn], justify="start", gap=1),
+    ])
+
+    return batch_mgmt_team_id, list_batch_scripts_btn, batch_exec_id_input, get_batch_script_btn, batch_host_status, get_batch_hosts_btn, cancel_batch_script_btn
+
+
+@app.cell
+def _(mo, json, fleet, batch_mgmt_team_id, list_batch_scripts_btn, fleet_success, fleet_error):
+    mo.stop(not list_batch_scripts_btn.value)
+
+    _status, _data = fleet("GET", f"/api/v1/fleet/scripts/batch?team_id={batch_mgmt_team_id.value}")
+
+    if _status == 200:
+        _batches = _data.get("batch_executions", [])
+        if _batches:
+            _formatted = json.dumps(_batches, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {len(_batches)} batch executions"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No batch executions found.**")
+    else:
+        _result = fleet_error(f"Failed to list batch scripts (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, json, fleet, batch_exec_id_input, get_batch_script_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_batch_script_btn.value)
+    mo.stop(not batch_exec_id_input.value, fleet_tip("Enter a Batch Execution ID."))
+
+    _batch_id = batch_exec_id_input.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/scripts/batch/{_batch_id}")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Batch execution {_batch_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get batch details (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, json, fleet, batch_exec_id_input, batch_host_status, get_batch_hosts_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_batch_hosts_btn.value)
+    mo.stop(not batch_exec_id_input.value, fleet_tip("Enter a Batch Execution ID."))
+
+    _batch_id = batch_exec_id_input.value.strip()
+    _filter_status = batch_host_status.value
+    _status, _data = fleet("GET", f"/api/v1/fleet/scripts/batch/{_batch_id}/host-results?status={_filter_status}")
+
+    if _status == 200:
+        _hosts = _data.get("hosts", [])
+        _count = _data.get("count", len(_hosts))
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Host results in batch {_batch_id} (status: {_filter_status}, count: {_count})"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get batch host results (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, fleet, batch_exec_id_input, cancel_batch_script_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not cancel_batch_script_btn.value)
+    mo.stop(not batch_exec_id_input.value, fleet_tip("Enter a Batch Execution ID."))
+
+    _batch_id = batch_exec_id_input.value.strip()
+    _status, _data = fleet("POST", f"/api/v1/fleet/scripts/batch/{_batch_id}/cancel")
+
+    if _status in (200, 204):
+        _result = fleet_success(f"Cancelled batch execution {_batch_id}")
+    else:
+        _result = fleet_error(f"Failed to cancel batch (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### List and Get Scripts
+
+List all saved scripts or get/download a specific script.
+""")
+
+
+@app.cell
+def _(mo):
+    scripts_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    list_scripts_btn = mo.ui.run_button(label="List Scripts")
+    script_id_input = mo.ui.text(placeholder="Script ID", label="Script ID")
+    get_script_btn = mo.ui.run_button(label="Get Script")
+    delete_script_btn = mo.ui.run_button(label="Delete Script", kind="danger")
+
+    mo.vstack([
+        mo.hstack([scripts_team_id, list_scripts_btn], justify="start", gap=1),
+        mo.hstack([script_id_input, get_script_btn, delete_script_btn], justify="start", gap=1),
+    ])
+
+    return scripts_team_id, list_scripts_btn, script_id_input, get_script_btn, delete_script_btn
+
+
+@app.cell
+def _(mo, json, fleet, scripts_team_id, list_scripts_btn, fleet_success, fleet_error):
+    mo.stop(not list_scripts_btn.value)
+
+    _team_param = f"?team_id={scripts_team_id.value}" if scripts_team_id.value > 0 else ""
+    _status, _data = fleet("GET", f"/api/v1/fleet/scripts{_team_param}")
+
+    if _status == 200:
+        _scripts = _data.get("scripts", [])
+        if _scripts:
+            _formatted = json.dumps(_scripts, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {len(_scripts)} scripts"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No scripts found.**")
+    else:
+        _result = fleet_error(f"Failed to list scripts (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, json, httpx, fleet_url_input, api_token_input, script_id_input, get_script_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_script_btn.value)
+    mo.stop(not script_id_input.value, fleet_tip("Enter a Script ID."))
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+    _script_id = script_id_input.value.strip()
+
+    try:
+        # Get metadata first
+        _meta_response = httpx.get(
+            f"{_url}/api/v1/fleet/scripts/{_script_id}",
+            headers={"Authorization": f"Bearer {_token}"},
+            timeout=30.0,
+        )
+        _meta_status = _meta_response.status_code
+        _metadata = _meta_response.json() if _meta_response.text else {}
+
+        # Get actual script content with alt=media
+        _content_response = httpx.get(
+            f"{_url}/api/v1/fleet/scripts/{_script_id}?alt=media",
+            headers={"Authorization": f"Bearer {_token}"},
+            timeout=30.0,
+        )
+        _content_status = _content_response.status_code
+        _script_content = _content_response.text
+    except Exception as e:
+        _meta_status = 0
+        _content_status = 0
+        _metadata = {"error": str(e)}
+        _script_content = str(e)
+
+    if _meta_status == 200:
+        _script_name = _metadata.get("name", f"script_{_script_id}.sh")
+        _formatted_meta = json.dumps(_metadata, indent=2)
+
+        if _content_status == 200:
+            _download_btn = mo.download(
+                data=_script_content.encode("utf-8"),
+                filename=_script_name,
+                mimetype="text/plain",
+                label=f"Download {_script_name}",
+            )
+            _result = mo.vstack([
+                fleet_success(f"Script {_script_id}: {_script_name}"),
+                mo.md(f"**Metadata:**\n```json\n{_formatted_meta}\n```"),
+                _download_btn,
+                mo.md(f"**Content:**\n```bash\n{_script_content[:5000]}{'...' if len(_script_content) > 5000 else ''}\n```"),
+            ])
+        else:
+            _result = mo.vstack([
+                fleet_success(f"Script {_script_id} metadata (content unavailable)"),
+                mo.md(f"```json\n{_formatted_meta}\n```"),
+            ])
+    else:
+        _result = fleet_error(f"Failed to get script (status {_meta_status}): {_metadata}")
+
+    _result
+
+
+@app.cell
+def _(mo, fleet, script_id_input, delete_script_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not delete_script_btn.value)
+    mo.stop(not script_id_input.value, fleet_tip("Enter a Script ID."))
+
+    _script_id = script_id_input.value.strip()
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/scripts/{_script_id}")
+
+    if _status == 200:
+        _result = fleet_success(f"Deleted script {_script_id}")
+    else:
+        _result = fleet_error(f"Failed to delete script (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### List Host's Scripts
+
+Get scripts assigned to a specific host.
+""")
+
+
+@app.cell
+def _(mo):
+    host_scripts_id = mo.ui.text(placeholder="Host ID", label="Host ID")
+    list_host_scripts_btn = mo.ui.run_button(label="List Host Scripts")
+
+    mo.hstack([host_scripts_id, list_host_scripts_btn], justify="start", gap=1)
+
+    return host_scripts_id, list_host_scripts_btn
+
+
+@app.cell
+def _(mo, json, fleet, host_scripts_id, list_host_scripts_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not list_host_scripts_btn.value)
+    mo.stop(not host_scripts_id.value, fleet_tip("Enter a Host ID."))
+
+    _host_id = host_scripts_id.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/hosts/{_host_id}/scripts")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Scripts for Host {_host_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to list host scripts (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Create Script
+
+Upload a new script.
+""")
+
+
+@app.cell
+def _(mo):
+    create_script_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    create_script_name = mo.ui.text(placeholder="my_script.sh", label="Script Name", full_width=True)
+    create_script_content = mo.ui.text_area(
+        placeholder="""#!/bin/bash
+# Your script here
+echo "Hello from Fleet!"
+exit 0""",
+        label="Script Content",
+        full_width=True,
+        rows=10,
+    )
+    create_script_btn = mo.ui.run_button(label="Create Script")
+
+    mo.vstack([
+        create_script_team_id,
+        create_script_name,
+        create_script_content,
+        mo.hstack([create_script_btn], justify="start"),
+    ])
+
+    return create_script_team_id, create_script_name, create_script_content, create_script_btn
+
+
+@app.cell
+def _(mo, json, httpx, fleet_url_input, api_token_input, create_script_team_id, create_script_name, create_script_content, create_script_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not create_script_btn.value)
+    mo.stop(not create_script_content.value, fleet_tip("Enter script content."))
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+    _name = create_script_name.value.strip() if create_script_name.value else "script.sh"
+
+    try:
+        _files = {
+            "script": (_name, create_script_content.value.encode('utf-8'), "text/plain"),
+        }
+        _data_fields = {}
+        if create_script_team_id.value > 0:
+            _data_fields["team_id"] = str(create_script_team_id.value)
+
+        _response = httpx.post(
+            f"{_url}/api/v1/fleet/scripts",
+            headers={"Authorization": f"Bearer {_token}"},
+            files=_files,
+            data=_data_fields,
+            timeout=30.0,
+        )
+        _status = _response.status_code
+        _resp_data = _response.json() if _response.text else {}
+    except Exception as e:
+        _status = 0
+        _resp_data = {"error": str(e)}
+
+    if _status in (200, 201):
+        _formatted = json.dumps(_resp_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Created script: {_name}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to create script (status {_status}): {_resp_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Update Script
+
+Update an existing script's content.
+""")
+
+
+@app.cell
+def _(mo):
+    update_script_id_input = mo.ui.text(placeholder="Script ID", label="Script ID", full_width=True)
+    update_script_content = mo.ui.text_area(
+        placeholder="New script content",
+        label="New Script Content",
+        full_width=True,
+        rows=8,
+    )
+    update_script_btn = mo.ui.run_button(label="Update Script")
+
+    mo.vstack([
+        update_script_id_input,
+        update_script_content,
+        mo.hstack([update_script_btn], justify="start"),
+    ])
+
+    return update_script_id_input, update_script_content, update_script_btn
+
+
+@app.cell
+def _(mo, json, httpx, fleet_url_input, api_token_input, update_script_id_input, update_script_content, update_script_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not update_script_btn.value)
+    mo.stop(not update_script_id_input.value, fleet_tip("Enter a Script ID."))
+    mo.stop(not update_script_content.value, fleet_tip("Enter new script content."))
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+    _script_id = update_script_id_input.value.strip()
+
+    try:
+        _files = {
+            "script": ("script.sh", update_script_content.value.encode('utf-8'), "text/plain"),
+        }
+
+        _response = httpx.patch(
+            f"{_url}/api/v1/fleet/scripts/{_script_id}",
+            headers={"Authorization": f"Bearer {_token}"},
+            files=_files,
+            timeout=30.0,
+        )
+        _status = _response.status_code
+        _resp_data = _response.json() if _response.text else {}
+    except Exception as e:
+        _status = 0
+        _resp_data = {"error": str(e)}
+
+    if _status == 200:
+        _formatted = json.dumps(_resp_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Updated script {_script_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to update script (status {_status}): {_resp_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
+## Software
+
+[📖 API Docs](https://fleetdm.com/docs/rest-api/rest-api#software)
+
+Manage software packages, App Store apps, and Fleet-maintained apps.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/fleet/software/titles` | GET | List software titles |
+| `/api/v1/fleet/software/titles/:id` | GET | Get software title |
+| `/api/v1/fleet/software/versions` | GET | List software versions |
+| `/api/v1/fleet/software/versions/:id` | GET | Get software version |
+| `/api/v1/fleet/os_versions` | GET | List operating systems |
+| `/api/v1/fleet/os_versions/:id` | GET | Get operating system version |
+| `/api/v1/fleet/software/package` | POST | Add software package |
+| `/api/v1/fleet/software/titles/:id/package` | PATCH | Update software package |
+| `/api/v1/fleet/software/titles/:title_id/available_for_install` | DELETE | Delete software |
+| `/api/v1/fleet/software/titles/:title_id/icon` | PUT | Update software icon |
+| `/api/v1/fleet/software/titles/:title_id/icon` | GET | Download software icon |
+| `/api/v1/fleet/software/titles/:title_id/icon` | DELETE | Delete software icon |
+| `/api/v1/fleet/software/app_store_apps` | GET | List Apple App Store apps |
+| `/api/v1/fleet/software/app_store_apps` | POST | Add App Store app |
+| `/api/v1/fleet/software/titles/:title_id/app_store_app` | PATCH | Update App Store app |
+| `/api/v1/fleet/software/fleet_maintained_apps` | GET | List Fleet-maintained apps |
+| `/api/v1/fleet/software/fleet_maintained_apps/:app_id` | GET | Get Fleet-maintained app |
+| `/api/v1/fleet/software/fleet_maintained_apps` | POST | Add Fleet-maintained app |
+| `/api/v1/fleet/hosts/:host_id/software/:software_title_id/install` | POST | Install software |
+| `/api/v1/fleet/hosts/:host_id/software/:software_title_id/uninstall` | POST | Uninstall software |
+| `/api/v1/fleet/software/install/:install_uuid/results` | GET | Get install result |
+| `/api/v1/fleet/software/titles/:title_id/package` | GET | Download software |
+""")
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### List Software Titles
+
+List all software titles across your fleet. Titles group multiple versions of the same software.
+""")
+
+
+@app.cell
+def _(mo):
+    sw_titles_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = all teams)")
+    sw_titles_query = mo.ui.text(placeholder="Search by name...", label="Search Query")
+    sw_titles_vuln_only = mo.ui.checkbox(label="Vulnerable only")
+    sw_titles_available_install = mo.ui.checkbox(label="Available for install only")
+    list_sw_titles_btn = mo.ui.run_button(label="List Software Titles")
+
+    mo.vstack([
+        mo.hstack([sw_titles_team_id, sw_titles_query], gap=1),
+        mo.hstack([sw_titles_vuln_only, sw_titles_available_install], gap=2),
+        mo.hstack([list_sw_titles_btn], justify="start"),
+    ])
+
+    return sw_titles_team_id, sw_titles_query, sw_titles_vuln_only, sw_titles_available_install, list_sw_titles_btn
+
+
+@app.cell
+def _(mo, json, fleet, sw_titles_team_id, sw_titles_query, sw_titles_vuln_only, sw_titles_available_install, list_sw_titles_btn, fleet_success, fleet_error):
+    mo.stop(not list_sw_titles_btn.value)
+
+    _params = []
+    if sw_titles_team_id.value > 0:
+        _params.append(f"team_id={sw_titles_team_id.value}")
+    if sw_titles_query.value:
+        _params.append(f"query={sw_titles_query.value}")
+    if sw_titles_vuln_only.value:
+        _params.append("vulnerable=true")
+    if sw_titles_available_install.value:
+        _params.append("available_for_install=true")
+
+    _query_str = "?" + "&".join(_params) if _params else ""
+    _status, _data = fleet("GET", f"/api/v1/fleet/software/titles{_query_str}")
+
+    if _status == 200:
+        _titles = _data.get("software_titles", [])
+        _count = _data.get("count", len(_titles))
+        if _titles:
+            _formatted = json.dumps(_titles, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {_count} software title(s)"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No software titles found.**")
+    else:
+        _result = fleet_error(f"Failed to list software titles (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Get Software Title
+
+Get details for a specific software title by ID.
+""")
+
+
+@app.cell
+def _(mo):
+    get_sw_title_id = mo.ui.text(placeholder="Software Title ID", label="Software Title ID")
+    get_sw_title_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (optional)")
+    get_sw_title_btn = mo.ui.run_button(label="Get Software Title")
+
+    mo.hstack([get_sw_title_id, get_sw_title_team_id, get_sw_title_btn], justify="start", gap=1)
+
+    return get_sw_title_id, get_sw_title_team_id, get_sw_title_btn
+
+
+@app.cell
+def _(mo, json, fleet, get_sw_title_id, get_sw_title_team_id, get_sw_title_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_sw_title_btn.value)
+    mo.stop(not get_sw_title_id.value, fleet_tip("Enter a Software Title ID."))
+
+    _title_id = get_sw_title_id.value.strip()
+    _team_param = f"?team_id={get_sw_title_team_id.value}" if get_sw_title_team_id.value > 0 else ""
+    _status, _data = fleet("GET", f"/api/v1/fleet/software/titles/{_title_id}{_team_param}")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Software title {_title_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get software title (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### List Software Versions
+
+List all software versions across your fleet. Each version is a specific release of a software title.
+""")
+
+
+@app.cell
+def _(mo):
+    sw_versions_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = all teams)")
+    sw_versions_query = mo.ui.text(placeholder="Search by name...", label="Search Query")
+    sw_versions_vuln_only = mo.ui.checkbox(label="Vulnerable only")
+    list_sw_versions_btn = mo.ui.run_button(label="List Software Versions")
+
+    mo.vstack([
+        mo.hstack([sw_versions_team_id, sw_versions_query, sw_versions_vuln_only], gap=1),
+        mo.hstack([list_sw_versions_btn], justify="start"),
+    ])
+
+    return sw_versions_team_id, sw_versions_query, sw_versions_vuln_only, list_sw_versions_btn
+
+
+@app.cell
+def _(mo, json, fleet, sw_versions_team_id, sw_versions_query, sw_versions_vuln_only, list_sw_versions_btn, fleet_success, fleet_error):
+    mo.stop(not list_sw_versions_btn.value)
+
+    _params = []
+    if sw_versions_team_id.value > 0:
+        _params.append(f"team_id={sw_versions_team_id.value}")
+    if sw_versions_query.value:
+        _params.append(f"query={sw_versions_query.value}")
+    if sw_versions_vuln_only.value:
+        _params.append("vulnerable=true")
+
+    _query_str = "?" + "&".join(_params) if _params else ""
+    _status, _data = fleet("GET", f"/api/v1/fleet/software/versions{_query_str}")
+
+    if _status == 200:
+        _versions = _data.get("software", [])
+        _count = _data.get("count", len(_versions))
+        if _versions:
+            _formatted = json.dumps(_versions, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {_count} software version(s)"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No software versions found.**")
+    else:
+        _result = fleet_error(f"Failed to list software versions (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Get Software Version
+
+Get details for a specific software version by ID.
+""")
+
+
+@app.cell
+def _(mo):
+    get_sw_version_id = mo.ui.text(placeholder="Software Version ID", label="Software Version ID")
+    get_sw_version_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (optional)")
+    get_sw_version_btn = mo.ui.run_button(label="Get Software Version")
+
+    mo.hstack([get_sw_version_id, get_sw_version_team_id, get_sw_version_btn], justify="start", gap=1)
+
+    return get_sw_version_id, get_sw_version_team_id, get_sw_version_btn
+
+
+@app.cell
+def _(mo, json, fleet, get_sw_version_id, get_sw_version_team_id, get_sw_version_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_sw_version_btn.value)
+    mo.stop(not get_sw_version_id.value, fleet_tip("Enter a Software Version ID."))
+
+    _version_id = get_sw_version_id.value.strip()
+    _team_param = f"?team_id={get_sw_version_team_id.value}" if get_sw_version_team_id.value > 0 else ""
+    _status, _data = fleet("GET", f"/api/v1/fleet/software/versions/{_version_id}{_team_param}")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Software version {_version_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get software version (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### List Operating Systems
+
+List all operating system versions across your fleet.
+""")
+
+
+@app.cell
+def _(mo):
+    os_versions_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = all teams)")
+    os_versions_platform = mo.ui.dropdown(
+        options={"All platforms": "", "macOS": "darwin", "Windows": "windows", "Ubuntu": "ubuntu", "CentOS": "centos", "Chrome": "chrome"},
+        value="All platforms",
+        label="Platform",
+    )
+    os_versions_name = mo.ui.text(placeholder="OS name filter (e.g., macOS)", label="OS Name")
+    list_os_versions_btn = mo.ui.run_button(label="List Operating Systems")
+
+    mo.vstack([
+        mo.hstack([os_versions_team_id, os_versions_platform], gap=1),
+        mo.hstack([os_versions_name, list_os_versions_btn], justify="start", gap=1),
+    ])
+
+    return os_versions_team_id, os_versions_platform, os_versions_name, list_os_versions_btn
+
+
+@app.cell
+def _(mo, json, fleet, os_versions_team_id, os_versions_platform, os_versions_name, list_os_versions_btn, fleet_success, fleet_error):
+    mo.stop(not list_os_versions_btn.value)
+
+    _params = []
+    if os_versions_team_id.value > 0:
+        _params.append(f"team_id={os_versions_team_id.value}")
+    if os_versions_platform.value:
+        _params.append(f"platform={os_versions_platform.value}")
+    if os_versions_name.value:
+        _params.append(f"os_name={os_versions_name.value}")
+
+    _query_str = "?" + "&".join(_params) if _params else ""
+    _status, _data = fleet("GET", f"/api/v1/fleet/os_versions{_query_str}")
+
+    if _status == 200:
+        _os_versions = _data.get("os_versions", [])
+        _count = _data.get("count", len(_os_versions))
+        if _os_versions:
+            _formatted = json.dumps(_os_versions, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {_count} OS version(s)"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No operating system versions found.**")
+    else:
+        _result = fleet_error(f"Failed to list OS versions (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Get Operating System Version
+
+Get details for a specific operating system version by ID.
+""")
+
+
+@app.cell
+def _(mo):
+    get_os_version_id = mo.ui.text(placeholder="OS Version ID", label="OS Version ID")
+    get_os_version_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (optional)")
+    get_os_version_btn = mo.ui.run_button(label="Get OS Version")
+
+    mo.hstack([get_os_version_id, get_os_version_team_id, get_os_version_btn], justify="start", gap=1)
+
+    return get_os_version_id, get_os_version_team_id, get_os_version_btn
+
+
+@app.cell
+def _(mo, json, fleet, get_os_version_id, get_os_version_team_id, get_os_version_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_os_version_btn.value)
+    mo.stop(not get_os_version_id.value, fleet_tip("Enter an OS Version ID."))
+
+    _version_id = get_os_version_id.value.strip()
+    _team_param = f"?team_id={get_os_version_team_id.value}" if get_os_version_team_id.value > 0 else ""
+    _status, _data = fleet("GET", f"/api/v1/fleet/os_versions/{_version_id}{_team_param}")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"OS version {_version_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get OS version (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Add Software Package
+
+Upload a software package (.pkg, .msi, .exe, .deb) to Fleet. Requires Fleet Premium.
+""")
+
+
+@app.cell
+def _(mo):
+    add_pkg_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    add_pkg_file = mo.ui.file(filetypes=[".pkg", ".msi", ".exe", ".deb", ".rpm"], label="Software Package", multiple=False)
+    add_pkg_install_script = mo.ui.text_area(placeholder="#!/bin/bash\ninstaller -pkg $INSTALLER_PATH -target /", label="Install Script (optional)", rows=3, full_width=True)
+    add_pkg_uninstall_script = mo.ui.text_area(placeholder="#!/bin/bash\nrm -rf /Applications/MyApp.app", label="Uninstall Script (optional)", rows=3, full_width=True)
+    add_pkg_pre_install_query = mo.ui.text_area(placeholder="SELECT 1 FROM osquery_info WHERE version >= '5.0.0';", label="Pre-install Query (optional)", rows=2, full_width=True)
+    add_pkg_post_install_script = mo.ui.text_area(placeholder="#!/bin/bash\necho 'Post-install complete'", label="Post-install Script (optional)", rows=2, full_width=True)
+    add_pkg_self_service = mo.ui.checkbox(label="Self-service (allow users to install)")
+    add_pkg_auto_install = mo.ui.checkbox(label="Automatic install")
+    add_pkg_btn = mo.ui.run_button(label="Upload Package")
+
+    mo.vstack([
+        mo.hstack([add_pkg_team_id, add_pkg_self_service, add_pkg_auto_install], gap=2),
+        add_pkg_file,
+        add_pkg_install_script,
+        add_pkg_uninstall_script,
+        add_pkg_pre_install_query,
+        add_pkg_post_install_script,
+        mo.hstack([add_pkg_btn], justify="start"),
+    ])
+
+    return add_pkg_team_id, add_pkg_file, add_pkg_install_script, add_pkg_uninstall_script, add_pkg_pre_install_query, add_pkg_post_install_script, add_pkg_self_service, add_pkg_auto_install, add_pkg_btn
+
+
+@app.cell
+def _(mo, json, httpx, fleet_url_input, api_token_input, add_pkg_team_id, add_pkg_file, add_pkg_install_script, add_pkg_uninstall_script, add_pkg_pre_install_query, add_pkg_post_install_script, add_pkg_self_service, add_pkg_auto_install, add_pkg_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not add_pkg_btn.value)
+    mo.stop(not add_pkg_file.value, fleet_tip("Select a software package file."))
+
+    _file = add_pkg_file.value[0]
+    _files = {"software": (_file.name, _file.contents, "application/octet-stream")}
+    _data = {}
+
+    if add_pkg_team_id.value > 0:
+        _data["team_id"] = str(add_pkg_team_id.value)
+    if add_pkg_install_script.value:
+        _data["install_script"] = add_pkg_install_script.value
+    if add_pkg_uninstall_script.value:
+        _data["uninstall_script"] = add_pkg_uninstall_script.value
+    if add_pkg_pre_install_query.value:
+        _data["pre_install_query"] = add_pkg_pre_install_query.value
+    if add_pkg_post_install_script.value:
+        _data["post_install_script"] = add_pkg_post_install_script.value
+    if add_pkg_self_service.value:
+        _data["self_service"] = "true"
+    if add_pkg_auto_install.value:
+        _data["automatic_install"] = "true"
+
+    try:
+        _response = httpx.post(
+            f"{fleet_url_input.value}/api/v1/fleet/software/package",
+            headers={"Authorization": f"Bearer {api_token_input.value}"},
+            files=_files,
+            data=_data,
+            timeout=300.0,  # Long timeout for large files
+        )
+        _status = _response.status_code
+        _resp_data = _response.json() if _response.text else {}
+    except Exception as e:
+        _status = 0
+        _resp_data = {"error": str(e)}
+
+    if _status in (200, 201):
+        _formatted = json.dumps(_resp_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Uploaded package: {_file.name}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to upload package (status {_status}): {_resp_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Update Software Package
+
+Update an existing software package by title ID.
+""")
+
+
+@app.cell
+def _(mo):
+    update_pkg_title_id = mo.ui.text(placeholder="Software Title ID", label="Software Title ID", full_width=True)
+    update_pkg_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    update_pkg_file = mo.ui.file(filetypes=[".pkg", ".msi", ".exe", ".deb", ".rpm"], label="New Package (optional)", multiple=False)
+    update_pkg_install_script = mo.ui.text_area(placeholder="Install script (leave empty to keep existing)", label="Install Script", rows=3, full_width=True)
+    update_pkg_uninstall_script = mo.ui.text_area(placeholder="Uninstall script (leave empty to keep existing)", label="Uninstall Script", rows=3, full_width=True)
+    update_pkg_self_service = mo.ui.dropdown(options={"Keep existing": "", "Enable": "true", "Disable": "false"}, value="Keep existing", label="Self-service")
+    update_pkg_btn = mo.ui.run_button(label="Update Package")
+
+    mo.vstack([
+        mo.hstack([update_pkg_title_id, update_pkg_team_id], gap=1),
+        update_pkg_file,
+        update_pkg_install_script,
+        update_pkg_uninstall_script,
+        update_pkg_self_service,
+        mo.hstack([update_pkg_btn], justify="start"),
+    ])
+
+    return update_pkg_title_id, update_pkg_team_id, update_pkg_file, update_pkg_install_script, update_pkg_uninstall_script, update_pkg_self_service, update_pkg_btn
+
+
+@app.cell
+def _(mo, json, httpx, fleet_url_input, api_token_input, update_pkg_title_id, update_pkg_team_id, update_pkg_file, update_pkg_install_script, update_pkg_uninstall_script, update_pkg_self_service, update_pkg_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not update_pkg_btn.value)
+    mo.stop(not update_pkg_title_id.value, fleet_tip("Enter a Software Title ID."))
+
+    _title_id = update_pkg_title_id.value.strip()
+    _files = {}
+    _data = {}
+
+    if update_pkg_file.value:
+        _file = update_pkg_file.value[0]
+        _files["software"] = (_file.name, _file.contents, "application/octet-stream")
+    if update_pkg_team_id.value > 0:
+        _data["team_id"] = str(update_pkg_team_id.value)
+    if update_pkg_install_script.value:
+        _data["install_script"] = update_pkg_install_script.value
+    if update_pkg_uninstall_script.value:
+        _data["uninstall_script"] = update_pkg_uninstall_script.value
+    if update_pkg_self_service.value:
+        _data["self_service"] = update_pkg_self_service.value
+
+    try:
+        _response = httpx.patch(
+            f"{fleet_url_input.value}/api/v1/fleet/software/titles/{_title_id}/package",
+            headers={"Authorization": f"Bearer {api_token_input.value}"},
+            files=_files if _files else None,
+            data=_data if _data else None,
+            timeout=300.0,
+        )
+        _status = _response.status_code
+        _resp_data = _response.json() if _response.text else {}
+    except Exception as e:
+        _status = 0
+        _resp_data = {"error": str(e)}
+
+    if _status == 200:
+        _formatted = json.dumps(_resp_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Updated software title {_title_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to update package (status {_status}): {_resp_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Software Icon Management
+
+Upload, download, or delete custom icons for software titles.
+""")
+
+
+@app.cell
+def _(mo):
+    icon_title_id = mo.ui.text(placeholder="Software Title ID", label="Software Title ID")
+    icon_file = mo.ui.file(filetypes=[".png", ".jpg", ".jpeg", ".gif", ".svg"], label="Icon File (for upload)", multiple=False)
+    upload_icon_btn = mo.ui.run_button(label="Upload Icon")
+    download_icon_btn = mo.ui.run_button(label="Download Icon")
+    delete_icon_btn = mo.ui.run_button(label="Delete Icon", kind="danger")
+
+    mo.vstack([
+        mo.hstack([icon_title_id], gap=1),
+        icon_file,
+        mo.hstack([upload_icon_btn, download_icon_btn, delete_icon_btn], justify="start", gap=1),
+    ])
+
+    return icon_title_id, icon_file, upload_icon_btn, download_icon_btn, delete_icon_btn
+
+
+@app.cell
+def _(mo, json, httpx, fleet_url_input, api_token_input, icon_title_id, icon_file, upload_icon_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not upload_icon_btn.value)
+    mo.stop(not icon_title_id.value, fleet_tip("Enter a Software Title ID."))
+    mo.stop(not icon_file.value, fleet_tip("Select an icon file."))
+
+    _title_id = icon_title_id.value.strip()
+    _file = icon_file.value[0]
+    _files = {"icon": (_file.name, _file.contents, "image/png")}
+
+    try:
+        _response = httpx.put(
+            f"{fleet_url_input.value}/api/v1/fleet/software/titles/{_title_id}/icon",
+            headers={"Authorization": f"Bearer {api_token_input.value}"},
+            files=_files,
+            timeout=60.0,
+        )
+        _status = _response.status_code
+        _resp_data = _response.json() if _response.text else {}
+    except Exception as e:
+        _status = 0
+        _resp_data = {"error": str(e)}
+
+    if _status == 200:
+        _formatted = json.dumps(_resp_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Uploaded icon for title {_title_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to upload icon (status {_status}): {_resp_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, httpx, fleet_url_input, api_token_input, icon_title_id, download_icon_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not download_icon_btn.value)
+    mo.stop(not icon_title_id.value, fleet_tip("Enter a Software Title ID."))
+
+    _title_id = icon_title_id.value.strip()
+
+    try:
+        _response = httpx.get(
+            f"{fleet_url_input.value}/api/v1/fleet/software/titles/{_title_id}/icon",
+            headers={"Authorization": f"Bearer {api_token_input.value}"},
+            timeout=60.0,
+        )
+        _status = _response.status_code
+    except Exception as e:
+        _status = 0
+        _response = None
+
+    if _status == 200 and _response:
+        _content_type = _response.headers.get("content-type", "image/png")
+        _result = mo.vstack([
+            fleet_success(f"Icon for title {_title_id} ({_content_type})"),
+            mo.image(_response.content),
+        ])
+    else:
+        _result = fleet_error(f"Failed to download icon (status {_status})")
+
+    _result
+
+
+@app.cell
+def _(mo, fleet, icon_title_id, delete_icon_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not delete_icon_btn.value)
+    mo.stop(not icon_title_id.value, fleet_tip("Enter a Software Title ID."))
+
+    _title_id = icon_title_id.value.strip()
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/software/titles/{_title_id}/icon")
+
+    if _status in (200, 204):
+        _result = fleet_success(f"Deleted icon for title {_title_id}")
+    else:
+        _result = fleet_error(f"Failed to delete icon (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Delete Software
+
+Remove software from Fleet. This deletes the package but not any installed instances on hosts.
+""")
+
+
+@app.cell
+def _(mo):
+    delete_sw_title_id = mo.ui.text(placeholder="Software Title ID", label="Software Title ID")
+    delete_sw_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    delete_sw_btn = mo.ui.run_button(label="Delete Software", kind="danger")
+
+    mo.hstack([delete_sw_title_id, delete_sw_team_id, delete_sw_btn], justify="start", gap=1)
+
+    return delete_sw_title_id, delete_sw_team_id, delete_sw_btn
+
+
+@app.cell
+def _(mo, fleet, delete_sw_title_id, delete_sw_team_id, delete_sw_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not delete_sw_btn.value)
+    mo.stop(not delete_sw_title_id.value, fleet_tip("Enter a Software Title ID."))
+
+    _title_id = delete_sw_title_id.value.strip()
+    _team_param = f"?team_id={delete_sw_team_id.value}" if delete_sw_team_id.value > 0 else ""
+    _status, _data = fleet("DELETE", f"/api/v1/fleet/software/titles/{_title_id}/available_for_install{_team_param}")
+
+    if _status in (200, 204):
+        _result = fleet_success(f"Deleted software title {_title_id}")
+    else:
+        _result = fleet_error(f"Failed to delete software (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Apple App Store Apps
+
+Manage VPP (Volume Purchase Program) apps from Apple App Store. Requires Apple Business Manager integration.
+""")
+
+
+@app.cell
+def _(mo):
+    vpp_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    list_vpp_btn = mo.ui.run_button(label="List App Store Apps")
+
+    mo.hstack([vpp_team_id, list_vpp_btn], justify="start", gap=1)
+
+    return vpp_team_id, list_vpp_btn
+
+
+@app.cell
+def _(mo, json, fleet, vpp_team_id, list_vpp_btn, fleet_success, fleet_error):
+    mo.stop(not list_vpp_btn.value)
+
+    _status, _data = fleet("GET", f"/api/v1/fleet/software/app_store_apps?team_id={vpp_team_id.value}")
+
+    if _status == 200:
+        _apps = _data.get("app_store_apps", [])
+        if _apps:
+            _formatted = json.dumps(_apps, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {len(_apps)} App Store app(s)"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No App Store apps configured.**")
+    else:
+        _result = fleet_error(f"Failed to list App Store apps (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Add App Store App
+
+Add an app from the Apple App Store via VPP.
+""")
+
+
+@app.cell
+def _(mo):
+    add_vpp_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    add_vpp_app_store_id = mo.ui.text(placeholder="App Store ID (e.g., 497799835 for Xcode)", label="App Store ID", full_width=True)
+    add_vpp_platform = mo.ui.dropdown(options={"iOS/iPadOS": "ios", "macOS": "macos"}, value="iOS/iPadOS", label="Platform")
+    add_vpp_self_service = mo.ui.checkbox(label="Self-service")
+    add_vpp_auto_install = mo.ui.checkbox(label="Automatic install")
+    add_vpp_btn = mo.ui.run_button(label="Add App Store App")
+
+    mo.vstack([
+        mo.hstack([add_vpp_team_id, add_vpp_platform], gap=1),
+        add_vpp_app_store_id,
+        mo.hstack([add_vpp_self_service, add_vpp_auto_install], gap=2),
+        mo.hstack([add_vpp_btn], justify="start"),
+    ])
+
+    return add_vpp_team_id, add_vpp_app_store_id, add_vpp_platform, add_vpp_self_service, add_vpp_auto_install, add_vpp_btn
+
+
+@app.cell
+def _(mo, json, fleet, add_vpp_team_id, add_vpp_app_store_id, add_vpp_platform, add_vpp_self_service, add_vpp_auto_install, add_vpp_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not add_vpp_btn.value)
+    mo.stop(not add_vpp_app_store_id.value, fleet_tip("Enter an App Store ID."))
+
+    _payload = {
+        "app_store_id": add_vpp_app_store_id.value.strip(),
+        "platform": add_vpp_platform.value,
+        "self_service": add_vpp_self_service.value,
+        "automatic_install": add_vpp_auto_install.value,
+    }
+    if add_vpp_team_id.value > 0:
+        _payload["team_id"] = add_vpp_team_id.value
+
+    _status, _data = fleet("POST", "/api/v1/fleet/software/app_store_apps", json_data=_payload)
+
+    if _status in (200, 201):
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Added App Store app: {add_vpp_app_store_id.value}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to add App Store app (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Update App Store App
+
+Update settings for an existing App Store app.
+""")
+
+
+@app.cell
+def _(mo):
+    update_vpp_title_id = mo.ui.text(placeholder="Software Title ID", label="Software Title ID", full_width=True)
+    update_vpp_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID")
+    update_vpp_self_service = mo.ui.dropdown(options={"Keep existing": "", "Enable": "true", "Disable": "false"}, value="Keep existing", label="Self-service")
+    update_vpp_btn = mo.ui.run_button(label="Update App Store App")
+
+    mo.vstack([
+        mo.hstack([update_vpp_title_id, update_vpp_team_id], gap=1),
+        update_vpp_self_service,
+        mo.hstack([update_vpp_btn], justify="start"),
+    ])
+
+    return update_vpp_title_id, update_vpp_team_id, update_vpp_self_service, update_vpp_btn
+
+
+@app.cell
+def _(mo, json, fleet, update_vpp_title_id, update_vpp_team_id, update_vpp_self_service, update_vpp_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not update_vpp_btn.value)
+    mo.stop(not update_vpp_title_id.value, fleet_tip("Enter a Software Title ID."))
+
+    _title_id = update_vpp_title_id.value.strip()
+    _payload = {}
+    if update_vpp_team_id.value > 0:
+        _payload["team_id"] = update_vpp_team_id.value
+    if update_vpp_self_service.value:
+        _payload["self_service"] = update_vpp_self_service.value == "true"
+
+    _status, _data = fleet("PATCH", f"/api/v1/fleet/software/titles/{_title_id}/app_store_app", json_data=_payload)
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Updated App Store app (title {_title_id})"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to update App Store app (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Fleet-Maintained Apps
+
+Browse and add pre-packaged apps maintained by Fleet.
+""")
+
+
+@app.cell
+def _(mo):
+    fma_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (optional)")
+    list_fma_btn = mo.ui.run_button(label="List Fleet-Maintained Apps")
+    fma_app_id = mo.ui.text(placeholder="Fleet App ID", label="Fleet App ID")
+    get_fma_btn = mo.ui.run_button(label="Get App Details")
+
+    mo.vstack([
+        mo.hstack([fma_team_id, list_fma_btn], justify="start", gap=1),
+        mo.hstack([fma_app_id, get_fma_btn], justify="start", gap=1),
+    ])
+
+    return fma_team_id, list_fma_btn, fma_app_id, get_fma_btn
+
+
+@app.cell
+def _(mo, json, fleet, fma_team_id, list_fma_btn, fleet_success, fleet_error):
+    mo.stop(not list_fma_btn.value)
+
+    _team_param = f"?team_id={fma_team_id.value}" if fma_team_id.value > 0 else ""
+    _status, _data = fleet("GET", f"/api/v1/fleet/software/fleet_maintained_apps{_team_param}")
+
+    if _status == 200:
+        _apps = _data.get("fleet_maintained_apps", [])
+        if _apps:
+            _formatted = json.dumps(_apps, indent=2)
+            _result = mo.vstack([
+                fleet_success(f"Found {len(_apps)} Fleet-maintained app(s)"),
+                mo.md(f"```json\n{_formatted}\n```"),
+            ])
+        else:
+            _result = mo.md("**No Fleet-maintained apps available.**")
+    else:
+        _result = fleet_error(f"Failed to list Fleet-maintained apps (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, json, fleet, fma_app_id, get_fma_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_fma_btn.value)
+    mo.stop(not fma_app_id.value, fleet_tip("Enter a Fleet App ID."))
+
+    _app_id = fma_app_id.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/software/fleet_maintained_apps/{_app_id}")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Fleet-maintained app {_app_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get Fleet-maintained app (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Add Fleet-Maintained App
+
+Add a Fleet-maintained app to your Fleet instance.
+""")
+
+
+@app.cell
+def _(mo):
+    add_fma_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    add_fma_app_id = mo.ui.text(placeholder="Fleet Maintained App ID", label="Fleet App ID", full_width=True)
+    add_fma_install_script = mo.ui.text_area(placeholder="Custom install script (optional, uses default if empty)", label="Install Script", rows=3, full_width=True)
+    add_fma_uninstall_script = mo.ui.text_area(placeholder="Custom uninstall script (optional)", label="Uninstall Script", rows=3, full_width=True)
+    add_fma_self_service = mo.ui.checkbox(label="Self-service")
+    add_fma_auto_install = mo.ui.checkbox(label="Automatic install")
+    add_fma_btn = mo.ui.run_button(label="Add Fleet-Maintained App")
+
+    mo.vstack([
+        mo.hstack([add_fma_team_id, add_fma_app_id], gap=1),
+        add_fma_install_script,
+        add_fma_uninstall_script,
+        mo.hstack([add_fma_self_service, add_fma_auto_install], gap=2),
+        mo.hstack([add_fma_btn], justify="start"),
+    ])
+
+    return add_fma_team_id, add_fma_app_id, add_fma_install_script, add_fma_uninstall_script, add_fma_self_service, add_fma_auto_install, add_fma_btn
+
+
+@app.cell
+def _(mo, json, fleet, add_fma_team_id, add_fma_app_id, add_fma_install_script, add_fma_uninstall_script, add_fma_self_service, add_fma_auto_install, add_fma_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not add_fma_btn.value)
+    mo.stop(not add_fma_app_id.value, fleet_tip("Enter a Fleet App ID."))
+
+    _payload = {
+        "fleet_maintained_app_id": int(add_fma_app_id.value.strip()),
+        "self_service": add_fma_self_service.value,
+        "automatic_install": add_fma_auto_install.value,
+    }
+    if add_fma_team_id.value > 0:
+        _payload["team_id"] = add_fma_team_id.value
+    if add_fma_install_script.value:
+        _payload["install_script"] = add_fma_install_script.value
+    if add_fma_uninstall_script.value:
+        _payload["uninstall_script"] = add_fma_uninstall_script.value
+
+    _status, _data = fleet("POST", "/api/v1/fleet/software/fleet_maintained_apps", json_data=_payload)
+
+    if _status in (200, 201):
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Added Fleet-maintained app {add_fma_app_id.value}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to add Fleet-maintained app (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Install / Uninstall Software
+
+Install or uninstall software on a specific host.
+""")
+
+
+@app.cell
+def _(mo):
+    install_host_id = mo.ui.text(placeholder="Host ID", label="Host ID")
+    install_title_id = mo.ui.text(placeholder="Software Title ID", label="Software Title ID")
+    install_sw_btn = mo.ui.run_button(label="Install Software")
+    uninstall_sw_btn = mo.ui.run_button(label="Uninstall Software", kind="danger")
+
+    mo.hstack([install_host_id, install_title_id, install_sw_btn, uninstall_sw_btn], justify="start", gap=1)
+
+    return install_host_id, install_title_id, install_sw_btn, uninstall_sw_btn
+
+
+@app.cell
+def _(mo, json, fleet, install_host_id, install_title_id, install_sw_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not install_sw_btn.value)
+    mo.stop(not install_host_id.value, fleet_tip("Enter a Host ID."))
+    mo.stop(not install_title_id.value, fleet_tip("Enter a Software Title ID."))
+
+    _host_id = install_host_id.value.strip()
+    _title_id = install_title_id.value.strip()
+    _status, _data = fleet("POST", f"/api/v1/fleet/hosts/{_host_id}/software/{_title_id}/install")
+
+    if _status in (200, 202):
+        _formatted = json.dumps(_data, indent=2) if _data else "{}"
+        _result = mo.vstack([
+            fleet_success(f"Install queued for host {_host_id}, software {_title_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to install software (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo, json, fleet, install_host_id, install_title_id, uninstall_sw_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not uninstall_sw_btn.value)
+    mo.stop(not install_host_id.value, fleet_tip("Enter a Host ID."))
+    mo.stop(not install_title_id.value, fleet_tip("Enter a Software Title ID."))
+
+    _host_id = install_host_id.value.strip()
+    _title_id = install_title_id.value.strip()
+    _status, _data = fleet("POST", f"/api/v1/fleet/hosts/{_host_id}/software/{_title_id}/uninstall")
+
+    if _status in (200, 202):
+        _formatted = json.dumps(_data, indent=2) if _data else "{}"
+        _result = mo.vstack([
+            fleet_success(f"Uninstall queued for host {_host_id}, software {_title_id}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to uninstall software (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Get Software Install Result
+
+Check the result of a software installation.
+""")
+
+
+@app.cell
+def _(mo):
+    install_uuid_input = mo.ui.text(placeholder="Install UUID", label="Install UUID", full_width=True)
+    get_install_result_btn = mo.ui.run_button(label="Get Install Result")
+
+    mo.hstack([install_uuid_input, get_install_result_btn], justify="start", gap=1)
+
+    return install_uuid_input, get_install_result_btn
+
+
+@app.cell
+def _(mo, json, fleet, install_uuid_input, get_install_result_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not get_install_result_btn.value)
+    mo.stop(not install_uuid_input.value, fleet_tip("Enter an Install UUID."))
+
+    _uuid = install_uuid_input.value.strip()
+    _status, _data = fleet("GET", f"/api/v1/fleet/software/install/{_uuid}/results")
+
+    if _status == 200:
+        _formatted = json.dumps(_data, indent=2)
+        _result = mo.vstack([
+            fleet_success(f"Install result for {_uuid}"),
+            mo.md(f"```json\n{_formatted}\n```"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to get install result (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Download Software Package
+
+Download the software package file for a given title.
+""")
+
+
+@app.cell
+def _(mo):
+    download_sw_title_id = mo.ui.text(placeholder="Software Title ID", label="Software Title ID")
+    download_sw_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    download_sw_btn = mo.ui.run_button(label="Download Software")
+
+    mo.hstack([download_sw_title_id, download_sw_team_id, download_sw_btn], justify="start", gap=1)
+
+    return download_sw_title_id, download_sw_team_id, download_sw_btn
+
+
+@app.cell
+def _(mo, httpx, fleet_url_input, api_token_input, download_sw_title_id, download_sw_team_id, download_sw_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not download_sw_btn.value)
+    mo.stop(not download_sw_title_id.value, fleet_tip("Enter a Software Title ID."))
+
+    _title_id = download_sw_title_id.value.strip()
+    _team_param = f"&team_id={download_sw_team_id.value}" if download_sw_team_id.value > 0 else ""
+
+    try:
+        _response = httpx.get(
+            f"{fleet_url_input.value}/api/v1/fleet/software/titles/{_title_id}/package?alt=media{_team_param}",
+            headers={"Authorization": f"Bearer {api_token_input.value}"},
+            timeout=300.0,
+            follow_redirects=True,
+        )
+        _status = _response.status_code
+    except Exception as e:
+        _status = 0
+        _response = None
+
+    if _status == 200 and _response:
+        _content_disp = _response.headers.get("content-disposition", "")
+        _filename = "software_package"
+        if "filename=" in _content_disp:
+            _filename = _content_disp.split("filename=")[-1].strip('"')
+        _size = len(_response.content)
+        _result = mo.vstack([
+            fleet_success(f"Downloaded: {_filename} ({_size:,} bytes)"),
+            mo.download(_response.content, filename=_filename, label=f"Save {_filename}"),
+        ])
+    else:
+        _result = fleet_error(f"Failed to download software (status {_status})")
 
     _result
 
