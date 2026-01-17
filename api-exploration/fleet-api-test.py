@@ -324,12 +324,14 @@ def _(os, subprocess, Path):
     # Get values from env file or environment variables
     _fleet_url_env = _env_vars.get("FLEET_URL", os.environ.get("FLEET_URL", ""))
     _fleet_token_env = _env_vars.get("FLEET_API_TOKEN", os.environ.get("FLEET_API_TOKEN", ""))
+    _fleetctl_path_env = _env_vars.get("FLEETCTL_PATH", os.environ.get("FLEETCTL_PATH", ""))
 
     # Resolve 1Password references
     env_fleet_url = resolve_op_reference(_fleet_url_env)
     env_fleet_token = resolve_op_reference(_fleet_token_env)
+    env_fleetctl_path = resolve_op_reference(_fleetctl_path_env)
 
-    return resolve_op_reference, load_env_file, env_fleet_url, env_fleet_token
+    return resolve_op_reference, load_env_file, env_fleet_url, env_fleet_token, env_fleetctl_path
 
 
 @app.cell
@@ -1448,12 +1450,30 @@ def _(mo):
 
 View and manage Fleet webhook configurations. Webhooks notify external services about Fleet events.
 
-| Webhook | Description |
-|---------|-------------|
-| **host_status_webhook** | Triggered when hosts fail to check in |
-| **failing_policies_webhook** | Triggered when policies fail on hosts |
-| **vulnerabilities_webhook** | Triggered when new vulnerabilities are detected |
-| **activities_webhook** | Triggered for Fleet activities |
+### Webhook Types and Trigger Behavior
+
+| Webhook | Trigger | Controlled by `interval`? |
+|---------|---------|---------------------------|
+| **host_status_webhook** | Scheduled (cron-like) | Yes |
+| **failing_policies_webhook** | Scheduled (cron-like) | Yes |
+| **vulnerabilities_webhook** | Event-driven (when CVEs detected) | No |
+| **activities_webhook** | Real-time (immediate, async) | No |
+
+### Configuration Notes
+
+**`interval` setting:**
+- Only applies to `host_status_webhook` and `failing_policies_webhook`
+- Default: `"24h"`
+- Valid formats: Go duration strings (`"1h"`, `"30m"`, `"90m"`, `"24h"`, `"1h30m"`)
+
+**`policy_ids` (failing_policies_webhook only):**
+- Array of specific policy IDs to monitor
+- If empty, monitors all policies
+
+**Validation rules:**
+- Cannot enable vulnerabilities webhook AND Jira/Zendesk vulnerability automation simultaneously
+- Cannot enable failing policies webhook AND Jira/Zendesk failing policies automation simultaneously
+- Destination URL required when webhook is enabled
 """)
 
 
@@ -1467,20 +1487,193 @@ def _(mo, json, fleet, fleet_success, fleet_error):
 
 
 @app.cell
-def _(mo, json, fleet, get_webhooks_btn, fleet_success, fleet_error):
+def _(mo, json, fleet, get_webhooks_btn, fleet_success, fleet_error, fleet_note):
     mo.stop(not get_webhooks_btn.value)
 
     _status, _data = fleet("GET", "/api/v1/fleet/config")
 
     if _status == 200:
         _webhook_settings = _data.get("webhook_settings", {})
+        _integrations = _data.get("integrations", {})
+
+        # Extract interval (at top level of webhook_settings)
+        _interval = _webhook_settings.get("interval", "not returned by API")
+
+        # Build summary table
+        _summary_rows = []
+        for _wh_key in ["host_status_webhook", "failing_policies_webhook", "vulnerabilities_webhook", "activities_webhook"]:
+            _wh = _webhook_settings.get(_wh_key, {})
+            _enabled = _wh.get(f"enable_{_wh_key}", False)
+            _url = _wh.get("destination_url", "")
+            _summary_rows.append(f"| `{_wh_key}` | {'Yes' if _enabled else 'No'} | `{_url[:40]}{'...' if len(_url) > 40 else ''}` |")
+
+        _summary_table = "\n".join(_summary_rows)
+
         _formatted = json.dumps(_webhook_settings, indent=2)
+        _integrations_formatted = json.dumps(_integrations, indent=2) if _integrations else "{}"
+
         _result = mo.vstack([
             fleet_success("Current Webhook Settings"),
-            mo.md(f"```json\n{_formatted}\n```"),
+            mo.md(f"""
+### Summary
+
+**Interval:** `{_interval}` (applies to host_status & failing_policies only)
+
+| Webhook | Enabled | Destination URL |
+|---------|---------|-----------------|
+{_summary_table}
+"""),
+            fleet_note("The <code>interval</code> field may not be returned by the API in some Fleet versions. If it shows 'not returned', the server is using the default (24h) or the value was set but isn't exposed via GET."),
+            mo.md(f"""
+### Full webhook_settings Response
+
+```json
+{_formatted}
+```
+
+### Related: integrations (can conflict with webhooks)
+
+```json
+{_integrations_formatted}
+```
+"""),
         ])
     else:
         _result = fleet_error(f"Failed to get config (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Get Config via fleetctl
+
+The `fleetctl` CLI may return more configuration details than the REST API, including the `interval` setting.
+
+**Configuration options:**
+- Set `FLEETCTL_PATH` in `.env` file or environment to specify the path to `fleetctl` binary
+- If not set, defaults to `fleetctl` (must be in PATH)
+- Can also use pre-configured fleetctl (with `fleetctl config set --address <url> --token <token>`)
+""")
+
+
+@app.cell
+def _(mo, env_fleetctl_path):
+    fleetctl_path_input = mo.ui.text(
+        placeholder="/usr/local/bin/fleetctl",
+        label="Path to fleetctl binary",
+        value=env_fleetctl_path if env_fleetctl_path else "fleetctl",
+        full_width=True,
+    )
+
+    fleetctl_use_env = mo.ui.checkbox(
+        label="Use pre-configured fleetctl (ignore URL/token fields)",
+        value=False,
+    )
+
+    run_fleetctl_btn = mo.ui.run_button(label="Run: fleetctl get config")
+
+    mo.vstack([
+        fleetctl_path_input,
+        fleetctl_use_env,
+        mo.hstack([run_fleetctl_btn], justify="start"),
+    ])
+
+    return fleetctl_path_input, fleetctl_use_env, run_fleetctl_btn
+
+
+@app.cell
+def _(mo, subprocess, fleet_url_input, api_token_input, fleetctl_path_input, fleetctl_use_env, run_fleetctl_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not run_fleetctl_btn.value)
+
+    _url = fleet_url_input.value.rstrip("/") if fleet_url_input.value else ""
+    _token = api_token_input.value.strip() if api_token_input.value else ""
+    _fleetctl = fleetctl_path_input.value.strip() if fleetctl_path_input.value else "fleetctl"
+
+    # fleetctl requires config set first, then get config (doesn't accept --address/--token on get)
+    if fleetctl_use_env.value:
+        # Use existing fleetctl config
+        _cmd = [_fleetctl, "get", "config", "--yaml"]
+        _auth_info = "Using fleetctl's pre-configured credentials (from `fleetctl config set`)"
+        _cmd_display = "$FLEETCTL_PATH get config --yaml"
+        _config_needed = False
+    else:
+        if not _url or not _token:
+            mo.stop(True, fleet_tip("Enter Fleet URL and API Token above, or check 'Use pre-configured fleetctl'."))
+        _auth_info = f"Using notebook credentials: `{_url}` with token `{_token[:8]}...` ({len(_token)} chars)"
+        _cmd_display = "$FLEETCTL_PATH config set ... && $FLEETCTL_PATH get config --yaml"
+        _config_needed = True
+
+    try:
+        if _config_needed:
+            # First, configure fleetctl with credentials
+            _config_cmd = [_fleetctl, "config", "set", "--address", _url, "--token", _token]
+            _config_proc = subprocess.run(
+                _config_cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if _config_proc.returncode != 0:
+                _error = _config_proc.stderr or _config_proc.stdout or "Unknown error"
+                _result = fleet_error(f"fleetctl config set failed: {_error[:500]}")
+                mo.stop(True, _result)
+
+        # Now get the config
+        _cmd = [_fleetctl, "get", "config", "--yaml"]
+        _proc = subprocess.run(
+            _cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if _proc.returncode == 0:
+            _output = _proc.stdout
+            # Highlight the interval line if present
+            _has_interval = "interval:" in _output
+
+            _result = mo.vstack([
+                fleet_success("fleetctl get config succeeded"),
+                mo.md(f"**Auth mode:** {_auth_info}"),
+                mo.md(f"**Contains interval setting:** {'Yes' if _has_interval else 'No'}"),
+                mo.md(f"""
+```yaml
+{_output[:8000]}{'... (truncated)' if len(_output) > 8000 else ''}
+```
+"""),
+            ])
+        else:
+            # fleetctl may output errors to stdout or stderr
+            _stderr = _proc.stderr.strip() if _proc.stderr else ""
+            _stdout = _proc.stdout.strip() if _proc.stdout else ""
+            _error_output = _stderr or _stdout or "No error message"
+            _help_msg = ""
+            if "unauthenticated" in _error_output.lower() or "token" in _error_output.lower():
+                if fleetctl_use_env.value:
+                    _help_msg = "\n\n**Tip:** Uncheck 'Use pre-configured fleetctl' to use the notebook's URL/token instead."
+                else:
+                    _help_msg = "\n\n**Tip:** Verify your API token is valid. The REST API test above can confirm if the token works."
+
+            _debug_info = f"""
+**Auth mode:** {_auth_info}
+**Command:** `{_cmd_display}`
+**Exit code:** {_proc.returncode}
+**stderr:** `{_stderr[:200] or '(empty)'}`
+**stdout:** `{_stdout[:200] or '(empty)'}`
+"""
+            _result = mo.vstack([
+                fleet_error(f"fleetctl failed: {_error_output[:500]}{_help_msg}"),
+                mo.md(_debug_info),
+            ])
+
+    except FileNotFoundError:
+        _result = fleet_error(f"fleetctl not found at '{_fleetctl}'. Set FLEETCTL_PATH in .env or enter the correct path above.")
+    except subprocess.TimeoutExpired:
+        _result = fleet_error("fleetctl command timed out after 30 seconds")
+    except Exception as e:
+        _result = fleet_error(f"Error running fleetctl: {str(e)}")
 
     _result
 
@@ -1531,6 +1724,18 @@ def _(mo):
         label="Host Batch Size (policies/vulnerabilities)",
     )
 
+    webhook_interval = mo.ui.text(
+        placeholder="24h",
+        value="24h",
+        label="Interval - host_status & failing_policies only (e.g. 90m, 24h)",
+    )
+
+    policy_ids_input = mo.ui.text(
+        placeholder="1, 5, 12 (comma-separated policy IDs)",
+        label="Policy IDs (failing_policies only, leave empty for all)",
+        full_width=True,
+    )
+
     update_webhook_btn = mo.ui.run_button(label="Update Webhook")
 
     mo.vstack([
@@ -1540,14 +1745,16 @@ def _(mo):
         host_percentage,
         days_count,
         host_batch_size,
+        policy_ids_input,
+        webhook_interval,
         mo.hstack([update_webhook_btn], justify="start"),
     ])
 
-    return webhook_type_dropdown, webhook_enabled, webhook_url, host_percentage, days_count, host_batch_size, update_webhook_btn
+    return webhook_type_dropdown, webhook_enabled, webhook_url, host_percentage, days_count, host_batch_size, policy_ids_input, webhook_interval, update_webhook_btn
 
 
 @app.cell
-def _(mo, json, fleet, webhook_type_dropdown, webhook_enabled, webhook_url, host_percentage, days_count, host_batch_size, update_webhook_btn, fleet_success, fleet_error, fleet_tip):
+def _(mo, json, fleet, webhook_type_dropdown, webhook_enabled, webhook_url, host_percentage, days_count, host_batch_size, policy_ids_input, webhook_interval, update_webhook_btn, fleet_success, fleet_error, fleet_tip):
     mo.stop(not update_webhook_btn.value)
     mo.stop(not webhook_url.value, fleet_tip("Enter a destination URL for the webhook."))
 
@@ -1563,11 +1770,19 @@ def _(mo, json, fleet, webhook_type_dropdown, webhook_enabled, webhook_url, host
     if _webhook_key == "host_status_webhook":
         _webhook_config["host_percentage"] = host_percentage.value
         _webhook_config["days_count"] = days_count.value
-    elif _webhook_key in ("failing_policies_webhook", "vulnerabilities_webhook"):
+    elif _webhook_key == "failing_policies_webhook":
+        _webhook_config["host_batch_size"] = host_batch_size.value
+        # Parse policy_ids from comma-separated string
+        if policy_ids_input.value.strip():
+            _policy_ids = [int(pid.strip()) for pid in policy_ids_input.value.split(",") if pid.strip().isdigit()]
+            if _policy_ids:
+                _webhook_config["policy_ids"] = _policy_ids
+    elif _webhook_key == "vulnerabilities_webhook":
         _webhook_config["host_batch_size"] = host_batch_size.value
 
     _payload = {
         "webhook_settings": {
+            "interval": webhook_interval.value,
             _webhook_key: _webhook_config
         }
     }
