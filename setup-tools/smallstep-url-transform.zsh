@@ -114,6 +114,61 @@ while true; do
     fi
 done
 
+# 3. Read Smallstep Root CA certificate (for trust profile)
+echo
+echo "Enter path to Smallstep ROOT CA certificate PEM file (press Enter to skip)"
+echo "(Download from Smallstep dashboard or use: step ca root root_ca.crt --ca-url <URL> --fingerprint <FP>)"
+while true; do
+    read -r "?Root CA certificate file path: " root_cert_path
+    root_cert_path="$(trim "$root_cert_path")"
+    if [[ -z "$root_cert_path" ]]; then
+        echo "Skipping root CA (no cert provided)."
+        root_cert_pem=""
+        break
+    fi
+    root_cert_path="${root_cert_path/#\~/$HOME}"
+    if [[ -f "$root_cert_path" ]]; then
+        root_cert_pem="$(cat "$root_cert_path")"
+        if [[ "$root_cert_pem" == *"BEGIN CERTIFICATE"* ]]; then
+            echo "Root CA certificate loaded."
+            break
+        else
+            echo "File does not appear to be a PEM certificate. Try again."
+        fi
+    else
+        echo "File not found: $root_cert_path. Try again or press Enter to skip."
+    fi
+done
+
+# 4. Read Smallstep Intermediate CA certificate (optional)
+if [[ -n "$root_cert_pem" ]]; then
+    echo
+    echo "Enter path to Smallstep INTERMEDIATE CA certificate PEM file (press Enter to skip)"
+    while true; do
+        read -r "?Intermediate CA certificate file path: " intermediate_cert_path
+        intermediate_cert_path="$(trim "$intermediate_cert_path")"
+        if [[ -z "$intermediate_cert_path" ]]; then
+            echo "Skipping intermediate CA (no cert provided)."
+            intermediate_cert_pem=""
+            break
+        fi
+        intermediate_cert_path="${intermediate_cert_path/#\~/$HOME}"
+        if [[ -f "$intermediate_cert_path" ]]; then
+            intermediate_cert_pem="$(cat "$intermediate_cert_path")"
+            if [[ "$intermediate_cert_pem" == *"BEGIN CERTIFICATE"* ]]; then
+                echo "Intermediate CA certificate loaded."
+                break
+            else
+                echo "File does not appear to be a PEM certificate. Try again."
+            fi
+        else
+            echo "File not found: $intermediate_cert_path. Try again or press Enter to skip."
+        fi
+    done
+else
+    intermediate_cert_pem=""
+fi
+
 # ============================================
 # PROCESS URL INPUTS
 # ============================================
@@ -335,7 +390,7 @@ MOBILECONFIG_EOF
 
         echo
         echo "--------------------------------------------"
-        echo "Generated mobileconfig"
+        echo "Generated SCEP mobileconfig"
         echo "--------------------------------------------"
         echo
         echo "  File: $output_file"
@@ -344,6 +399,123 @@ MOBILECONFIG_EOF
         echo "  Root PayloadUUID:       $root_uuid"
         echo "  SCEP PayloadIdentifier: com.apple.security.scep.${scep_uuid}"
         echo "  SCEP PayloadUUID:       $scep_uuid"
+    fi
+
+    # ============================================
+    # GENERATE TRUST PROFILE IF CA CERTS PROVIDED
+    # ============================================
+
+    if [[ -n "$root_cert_pem" ]]; then
+        read -r "?Generate CA trust mobileconfig? (y/N): " gen_trust
+        gen_trust="$(trim "$gen_trust")"
+
+        if [[ "${(L)gen_trust}" == "y" || "${(L)gen_trust}" == "yes" ]]; then
+            trust_file="smallstep-trust-${(L)ca_name_upper}.mobileconfig"
+            read -r "?Trust profile filename [${trust_file}]: " custom_trust_file
+            custom_trust_file="$(trim "$custom_trust_file")"
+            if [[ -n "$custom_trust_file" ]]; then
+                trust_file="$custom_trust_file"
+            fi
+
+            # Generate UUIDs for trust profile
+            trust_profile_uuid_hash=$(echo -n "trust.${payload_id}" | md5)
+            trust_profile_uuid="${trust_profile_uuid_hash:0:8}-${trust_profile_uuid_hash:8:4}-${trust_profile_uuid_hash:12:4}-${trust_profile_uuid_hash:16:4}-${trust_profile_uuid_hash:20:12}"
+            trust_profile_uuid="${(U)trust_profile_uuid}"
+
+            root_cert_uuid_hash=$(echo -n "com.apple.security.root.${payload_id}" | md5)
+            root_cert_uuid="${root_cert_uuid_hash:0:8}-${root_cert_uuid_hash:8:4}-${root_cert_uuid_hash:12:4}-${root_cert_uuid_hash:16:4}-${root_cert_uuid_hash:20:12}"
+            root_cert_uuid="${(U)root_cert_uuid}"
+
+            # Convert root PEM to base64 (strip headers, join lines, remove spaces)
+            root_cert_base64=$(echo "$root_cert_pem" | grep -v "BEGIN CERTIFICATE" | grep -v "END CERTIFICATE" | tr -d '\n' | tr -d ' ')
+
+            # Start building payload content with root cert
+            payload_content="        <dict>
+            <key>PayloadCertificateFileName</key>
+            <string>smallstep-root-ca.cer</string>
+            <key>PayloadContent</key>
+            <data>${root_cert_base64}</data>
+            <key>PayloadDisplayName</key>
+            <string>Smallstep Root CA</string>
+            <key>PayloadIdentifier</key>
+            <string>com.apple.security.root.${root_cert_uuid}</string>
+            <key>PayloadType</key>
+            <string>com.apple.security.root</string>
+            <key>PayloadUUID</key>
+            <string>${root_cert_uuid}</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>"
+
+            cert_info="  Root CA PayloadUUID: $root_cert_uuid"
+
+            # Add intermediate cert if provided
+            if [[ -n "$intermediate_cert_pem" ]]; then
+                intermediate_cert_uuid_hash=$(echo -n "com.apple.security.pkcs1.intermediate.${payload_id}" | md5)
+                intermediate_cert_uuid="${intermediate_cert_uuid_hash:0:8}-${intermediate_cert_uuid_hash:8:4}-${intermediate_cert_uuid_hash:12:4}-${intermediate_cert_uuid_hash:16:4}-${intermediate_cert_uuid_hash:20:12}"
+                intermediate_cert_uuid="${(U)intermediate_cert_uuid}"
+
+                intermediate_cert_base64=$(echo "$intermediate_cert_pem" | grep -v "BEGIN CERTIFICATE" | grep -v "END CERTIFICATE" | tr -d '\n' | tr -d ' ')
+
+                payload_content="${payload_content}
+        <dict>
+            <key>PayloadCertificateFileName</key>
+            <string>smallstep-intermediate-ca.cer</string>
+            <key>PayloadContent</key>
+            <data>${intermediate_cert_base64}</data>
+            <key>PayloadDisplayName</key>
+            <string>Smallstep Intermediate CA</string>
+            <key>PayloadIdentifier</key>
+            <string>com.apple.security.pkcs1.${intermediate_cert_uuid}</string>
+            <key>PayloadType</key>
+            <string>com.apple.security.pkcs1</string>
+            <key>PayloadUUID</key>
+            <string>${intermediate_cert_uuid}</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>"
+
+                cert_info="${cert_info}
+  Intermediate CA PayloadUUID: $intermediate_cert_uuid"
+            fi
+
+            # Write trust mobileconfig (device channel with PayloadScope=System)
+            cat > "$trust_file" << TRUST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+${payload_content}
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>Smallstep CA Trust - ${ca_name_upper}</string>
+    <key>PayloadIdentifier</key>
+    <string>trust.${payload_id}</string>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>${trust_profile_uuid}</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
+TRUST_EOF
+
+            echo
+            echo "--------------------------------------------"
+            echo "Generated CA Trust mobileconfig (Device Channel)"
+            echo "--------------------------------------------"
+            echo
+            echo "  File: $trust_file"
+            echo
+            echo "  Profile PayloadIdentifier: trust.${payload_id}"
+            echo "  Profile PayloadUUID: $trust_profile_uuid"
+            echo "$cert_info"
+        fi
     fi
 
     echo
