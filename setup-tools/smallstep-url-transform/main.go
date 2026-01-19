@@ -351,6 +351,8 @@ func writeSCEPMobileconfig(filename, payloadID, caName, challengeVar, proxyVar, 
                 </array>
                 <key>URL</key>
                 <string>%s</string>
+                <key>AllowAllAppsAccess</key>
+                <true/>
             </dict>
             <key>PayloadDisplayName</key>
             <string>SCEP (%s)</string>

@@ -361,6 +361,8 @@ while true; do
                 </array>
                 <key>URL</key>
                 <string>${proxy_var}</string>
+                <key>AllowAllAppsAccess</key>
+                <true/>
             </dict>
             <key>PayloadDisplayName</key>
             <string>SCEP (${ca_name_upper})</string>
