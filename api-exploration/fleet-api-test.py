@@ -247,7 +247,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _(mo, json):
     def fleet_note(content):
         return mo.Html(f'<div class="fleet-note">{content}</div>')
 
@@ -263,7 +263,28 @@ def _(mo):
     def fleet_error(content):
         return mo.Html(f'<div class="fleet-error">{content}</div>')
 
-    return fleet_note, fleet_tip, fleet_warning, fleet_success, fleet_error
+    def fleet_output(title, data, success=True):
+        """Create collapsible output with JSON data.
+
+        Args:
+            title: Header text for the accordion
+            data: Data to display (will be JSON formatted if dict/list)
+            success: If True, show success styling; if False, show error styling
+        """
+        if isinstance(data, (dict, list)):
+            _formatted = json.dumps(data, indent=2)
+        else:
+            _formatted = str(data)
+
+        _header = fleet_success(title) if success else fleet_error(title)
+        _content = mo.md(f"```json\n{_formatted}\n```")
+
+        return mo.vstack([
+            _header,
+            mo.accordion({f"View Response ({len(_formatted):,} chars)": _content}),
+        ])
+
+    return fleet_note, fleet_tip, fleet_warning, fleet_success, fleet_error, fleet_output
 
 
 @app.cell
@@ -5048,47 +5069,99 @@ List all software titles across your fleet. Titles group multiple versions of th
 
 @app.cell
 def _(mo):
-    sw_titles_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = all teams)")
+    sw_titles_team_id = mo.ui.number(start=-1, stop=999999, step=1, value=-1, label="Team ID (-1 = all, 0 = no team)")
     sw_titles_query = mo.ui.text(placeholder="Search by name...", label="Search Query")
+    sw_titles_per_page = mo.ui.dropdown(
+        options={"25": "25", "50": "50", "100": "100", "250": "250"},
+        value="50",
+        label="Per Page",
+    )
+    sw_titles_page = mo.ui.number(start=0, stop=9999, step=1, value=0, label="Page (0 = first)")
+    sw_titles_order = mo.ui.dropdown(
+        options={"Most installed": "hosts_count,desc", "Least installed": "hosts_count,asc", "Name A-Z": "name,asc", "Name Z-A": "name,desc"},
+        value="Most installed",
+        label="Sort by",
+    )
+    sw_titles_platform = mo.ui.dropdown(
+        options={"All platforms": "", "macOS": "darwin", "Windows": "windows", "Linux": "linux", "iOS": "ios", "iPadOS": "ipados", "Chrome": "chrome"},
+        value="All platforms",
+        label="Platform",
+    )
     sw_titles_vuln_only = mo.ui.checkbox(label="Vulnerable only")
-    sw_titles_available_install = mo.ui.checkbox(label="Available for install only")
+    sw_titles_exploit = mo.ui.checkbox(label="Known exploit")
+    sw_titles_min_cvss = mo.ui.number(start=0, stop=10, step=0.1, value=0, label="Min CVSS")
+    sw_titles_max_cvss = mo.ui.number(start=0, stop=10, step=0.1, value=0, label="Max CVSS")
+    sw_titles_available_install = mo.ui.checkbox(label="Available for install")
+    sw_titles_self_service = mo.ui.checkbox(label="Self-service only")
+    sw_titles_packages_only = mo.ui.checkbox(label="Packages only")
+    sw_titles_exclude_fma = mo.ui.checkbox(label="Exclude Fleet-maintained apps")
     list_sw_titles_btn = mo.ui.run_button(label="List Software Titles")
 
     mo.vstack([
-        mo.hstack([sw_titles_team_id, sw_titles_query], gap=1),
-        mo.hstack([sw_titles_vuln_only, sw_titles_available_install], gap=2),
+        mo.hstack([sw_titles_team_id, sw_titles_query, sw_titles_per_page, sw_titles_page, sw_titles_order, sw_titles_platform], gap=1),
+        mo.hstack([sw_titles_available_install, sw_titles_self_service, sw_titles_packages_only, sw_titles_exclude_fma], gap=2),
+        mo.hstack([sw_titles_vuln_only, sw_titles_exploit, sw_titles_min_cvss, sw_titles_max_cvss], gap=2),
         mo.hstack([list_sw_titles_btn], justify="start"),
     ])
 
-    return sw_titles_team_id, sw_titles_query, sw_titles_vuln_only, sw_titles_available_install, list_sw_titles_btn
+    return sw_titles_team_id, sw_titles_query, sw_titles_per_page, sw_titles_page, sw_titles_order, sw_titles_platform, sw_titles_vuln_only, sw_titles_exploit, sw_titles_min_cvss, sw_titles_max_cvss, sw_titles_available_install, sw_titles_self_service, sw_titles_packages_only, sw_titles_exclude_fma, list_sw_titles_btn
 
 
 @app.cell
-def _(mo, json, fleet, sw_titles_team_id, sw_titles_query, sw_titles_vuln_only, sw_titles_available_install, list_sw_titles_btn, fleet_success, fleet_error):
+def _(mo, fleet, sw_titles_team_id, sw_titles_query, sw_titles_per_page, sw_titles_page, sw_titles_order, sw_titles_platform, sw_titles_vuln_only, sw_titles_exploit, sw_titles_min_cvss, sw_titles_max_cvss, sw_titles_available_install, sw_titles_self_service, sw_titles_packages_only, sw_titles_exclude_fma, list_sw_titles_btn, fleet_error, fleet_output, fleet_tip):
     mo.stop(not list_sw_titles_btn.value)
 
-    _params = []
-    if sw_titles_team_id.value > 0:
+    # Validate filter combinations
+    if sw_titles_packages_only.value and sw_titles_team_id.value < 0:
+        mo.stop(True, fleet_tip("'Packages only' filter requires a Team ID to be set (use 0 for 'no team')."))
+    if sw_titles_platform.value and sw_titles_team_id.value < 0:
+        mo.stop(True, fleet_tip("'Platform' filter requires a Team ID to be set (use 0 for 'no team')."))
+    if (sw_titles_min_cvss.value > 0 or sw_titles_max_cvss.value > 0 or sw_titles_exploit.value) and not sw_titles_vuln_only.value:
+        mo.stop(True, fleet_tip("CVSS and exploit filters require 'Vulnerable only' to be checked."))
+
+    # Parse sort option
+    _order_key, _order_dir = sw_titles_order.value.split(",")
+
+    _params = [f"per_page={sw_titles_per_page.value}", f"page={sw_titles_page.value}", f"order_key={_order_key}", f"order_direction={_order_dir}"]
+    if sw_titles_team_id.value >= 0:  # -1 = all teams (don't send), 0 = no team, >0 = specific team
         _params.append(f"team_id={sw_titles_team_id.value}")
     if sw_titles_query.value:
         _params.append(f"query={sw_titles_query.value}")
+    if sw_titles_platform.value:
+        _params.append(f"platform={sw_titles_platform.value}")
     if sw_titles_vuln_only.value:
         _params.append("vulnerable=true")
+    if sw_titles_exploit.value:
+        _params.append("exploit=true")
+    if sw_titles_min_cvss.value > 0:
+        _params.append(f"min_cvss_score={sw_titles_min_cvss.value}")
+    if sw_titles_max_cvss.value > 0:
+        _params.append(f"max_cvss_score={sw_titles_max_cvss.value}")
     if sw_titles_available_install.value:
         _params.append("available_for_install=true")
+    if sw_titles_self_service.value:
+        _params.append("self_service=true")
+    if sw_titles_packages_only.value:
+        _params.append("packages_only=true")
+    if sw_titles_exclude_fma.value:
+        _params.append("exclude_fleet_maintained_apps=true")
 
-    _query_str = "?" + "&".join(_params) if _params else ""
-    _status, _data = fleet("GET", f"/api/v1/fleet/software/titles{_query_str}")
+    _query_str = "?" + "&".join(_params)
+
+    with mo.status.spinner(title="Fetching software titles..."):
+        _status, _data = fleet("GET", f"/api/v1/fleet/software/titles{_query_str}")
 
     if _status == 200:
         _titles = _data.get("software_titles", [])
-        _count = _data.get("count", len(_titles))
+        _count = _data.get("count", 0)
+        _meta = _data.get("meta", {})
+        _has_next = _meta.get("has_next_results", False)
+        _has_prev = _meta.get("has_previous_results", False)
         if _titles:
-            _formatted = json.dumps(_titles, indent=2)
-            _result = mo.vstack([
-                fleet_success(f"Found {_count} software title(s)"),
-                mo.md(f"```json\n{_formatted}\n```"),
-            ])
+            _page_info = f"Page {sw_titles_page.value} | Showing {len(_titles)} of {_count} total"
+            if _has_next:
+                _page_info += " | More pages available →"
+            _result = fleet_output(f"{_page_info}", _titles)
         else:
             _result = mo.md("**No software titles found.**")
     else:
@@ -5151,22 +5224,28 @@ List all software versions across your fleet. Each version is a specific release
 def _(mo):
     sw_versions_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = all teams)")
     sw_versions_query = mo.ui.text(placeholder="Search by name...", label="Search Query")
+    sw_versions_per_page = mo.ui.dropdown(
+        options={"25": "25", "50": "50", "100": "100", "250": "250"},
+        value="50",
+        label="Per Page",
+    )
+    sw_versions_page = mo.ui.number(start=0, stop=9999, step=1, value=0, label="Page")
     sw_versions_vuln_only = mo.ui.checkbox(label="Vulnerable only")
     list_sw_versions_btn = mo.ui.run_button(label="List Software Versions")
 
     mo.vstack([
-        mo.hstack([sw_versions_team_id, sw_versions_query, sw_versions_vuln_only], gap=1),
-        mo.hstack([list_sw_versions_btn], justify="start"),
+        mo.hstack([sw_versions_team_id, sw_versions_query, sw_versions_per_page, sw_versions_page], gap=1),
+        mo.hstack([sw_versions_vuln_only, list_sw_versions_btn], gap=2, justify="start"),
     ])
 
-    return sw_versions_team_id, sw_versions_query, sw_versions_vuln_only, list_sw_versions_btn
+    return sw_versions_team_id, sw_versions_query, sw_versions_per_page, sw_versions_page, sw_versions_vuln_only, list_sw_versions_btn
 
 
 @app.cell
-def _(mo, json, fleet, sw_versions_team_id, sw_versions_query, sw_versions_vuln_only, list_sw_versions_btn, fleet_success, fleet_error):
+def _(mo, fleet, sw_versions_team_id, sw_versions_query, sw_versions_per_page, sw_versions_page, sw_versions_vuln_only, list_sw_versions_btn, fleet_error, fleet_output):
     mo.stop(not list_sw_versions_btn.value)
 
-    _params = []
+    _params = [f"per_page={sw_versions_per_page.value}", f"page={sw_versions_page.value}"]
     if sw_versions_team_id.value > 0:
         _params.append(f"team_id={sw_versions_team_id.value}")
     if sw_versions_query.value:
@@ -5174,18 +5253,21 @@ def _(mo, json, fleet, sw_versions_team_id, sw_versions_query, sw_versions_vuln_
     if sw_versions_vuln_only.value:
         _params.append("vulnerable=true")
 
-    _query_str = "?" + "&".join(_params) if _params else ""
-    _status, _data = fleet("GET", f"/api/v1/fleet/software/versions{_query_str}")
+    _query_str = "?" + "&".join(_params)
+
+    with mo.status.spinner(title="Fetching software versions..."):
+        _status, _data = fleet("GET", f"/api/v1/fleet/software/versions{_query_str}")
 
     if _status == 200:
         _versions = _data.get("software", [])
-        _count = _data.get("count", len(_versions))
+        _count = _data.get("count", 0)
+        _meta = _data.get("meta", {})
+        _has_next = _meta.get("has_next_results", False)
         if _versions:
-            _formatted = json.dumps(_versions, indent=2)
-            _result = mo.vstack([
-                fleet_success(f"Found {_count} software version(s)"),
-                mo.md(f"```json\n{_formatted}\n```"),
-            ])
+            _page_info = f"Page {sw_versions_page.value} | Showing {len(_versions)} of {_count} total"
+            if _has_next:
+                _page_info += " | More pages available →"
+            _result = fleet_output(f"{_page_info}", _versions)
         else:
             _result = mo.md("**No software versions found.**")
     else:
@@ -5252,22 +5334,28 @@ def _(mo):
         value="All platforms",
         label="Platform",
     )
+    os_versions_per_page = mo.ui.dropdown(
+        options={"25": "25", "50": "50", "100": "100", "250": "250"},
+        value="50",
+        label="Per Page",
+    )
+    os_versions_page = mo.ui.number(start=0, stop=9999, step=1, value=0, label="Page")
     os_versions_name = mo.ui.text(placeholder="OS name filter (e.g., macOS)", label="OS Name")
     list_os_versions_btn = mo.ui.run_button(label="List Operating Systems")
 
     mo.vstack([
-        mo.hstack([os_versions_team_id, os_versions_platform], gap=1),
+        mo.hstack([os_versions_team_id, os_versions_platform, os_versions_per_page, os_versions_page], gap=1),
         mo.hstack([os_versions_name, list_os_versions_btn], justify="start", gap=1),
     ])
 
-    return os_versions_team_id, os_versions_platform, os_versions_name, list_os_versions_btn
+    return os_versions_team_id, os_versions_platform, os_versions_per_page, os_versions_page, os_versions_name, list_os_versions_btn
 
 
 @app.cell
-def _(mo, json, fleet, os_versions_team_id, os_versions_platform, os_versions_name, list_os_versions_btn, fleet_success, fleet_error):
+def _(mo, fleet, os_versions_team_id, os_versions_platform, os_versions_per_page, os_versions_page, os_versions_name, list_os_versions_btn, fleet_error, fleet_output):
     mo.stop(not list_os_versions_btn.value)
 
-    _params = []
+    _params = [f"per_page={os_versions_per_page.value}", f"page={os_versions_page.value}"]
     if os_versions_team_id.value > 0:
         _params.append(f"team_id={os_versions_team_id.value}")
     if os_versions_platform.value:
@@ -5275,18 +5363,21 @@ def _(mo, json, fleet, os_versions_team_id, os_versions_platform, os_versions_na
     if os_versions_name.value:
         _params.append(f"os_name={os_versions_name.value}")
 
-    _query_str = "?" + "&".join(_params) if _params else ""
-    _status, _data = fleet("GET", f"/api/v1/fleet/os_versions{_query_str}")
+    _query_str = "?" + "&".join(_params)
+
+    with mo.status.spinner(title="Fetching operating systems..."):
+        _status, _data = fleet("GET", f"/api/v1/fleet/os_versions{_query_str}")
 
     if _status == 200:
         _os_versions = _data.get("os_versions", [])
-        _count = _data.get("count", len(_os_versions))
+        _count = _data.get("count", 0)
+        _meta = _data.get("meta", {})
+        _has_next = _meta.get("has_next_results", False)
         if _os_versions:
-            _formatted = json.dumps(_os_versions, indent=2)
-            _result = mo.vstack([
-                fleet_success(f"Found {_count} OS version(s)"),
-                mo.md(f"```json\n{_formatted}\n```"),
-            ])
+            _page_info = f"Page {os_versions_page.value} | Showing {len(_os_versions)} of {_count} total"
+            if _has_next:
+                _page_info += " | More pages available →"
+            _result = fleet_output(f"{_page_info}", _os_versions)
         else:
             _result = mo.md("**No operating system versions found.**")
     else:
@@ -5355,6 +5446,8 @@ def _(mo):
     add_pkg_post_install_script = mo.ui.text_area(placeholder="#!/bin/bash\necho 'Post-install complete'", label="Post-install Script (optional)", rows=2, full_width=True)
     add_pkg_self_service = mo.ui.checkbox(label="Self-service (allow users to install)")
     add_pkg_auto_install = mo.ui.checkbox(label="Automatic install")
+    add_pkg_labels_include = mo.ui.text(placeholder="label1, label2, ...", label="Labels Include Any (comma-separated)", full_width=True)
+    add_pkg_labels_exclude = mo.ui.text(placeholder="label1, label2, ...", label="Labels Exclude Any (comma-separated)", full_width=True)
     add_pkg_btn = mo.ui.run_button(label="Upload Package")
 
     mo.vstack([
@@ -5364,14 +5457,17 @@ def _(mo):
         add_pkg_uninstall_script,
         add_pkg_pre_install_query,
         add_pkg_post_install_script,
+        mo.md("**Label Targeting** (install only on hosts matching labels)"),
+        add_pkg_labels_include,
+        add_pkg_labels_exclude,
         mo.hstack([add_pkg_btn], justify="start"),
     ])
 
-    return add_pkg_team_id, add_pkg_file, add_pkg_install_script, add_pkg_uninstall_script, add_pkg_pre_install_query, add_pkg_post_install_script, add_pkg_self_service, add_pkg_auto_install, add_pkg_btn
+    return add_pkg_team_id, add_pkg_file, add_pkg_install_script, add_pkg_uninstall_script, add_pkg_pre_install_query, add_pkg_post_install_script, add_pkg_self_service, add_pkg_auto_install, add_pkg_labels_include, add_pkg_labels_exclude, add_pkg_btn
 
 
 @app.cell
-def _(mo, json, httpx, fleet_url_input, api_token_input, add_pkg_team_id, add_pkg_file, add_pkg_install_script, add_pkg_uninstall_script, add_pkg_pre_install_query, add_pkg_post_install_script, add_pkg_self_service, add_pkg_auto_install, add_pkg_btn, fleet_success, fleet_error, fleet_tip):
+def _(mo, json, httpx, fleet_url_input, api_token_input, add_pkg_team_id, add_pkg_file, add_pkg_install_script, add_pkg_uninstall_script, add_pkg_pre_install_query, add_pkg_post_install_script, add_pkg_self_service, add_pkg_auto_install, add_pkg_labels_include, add_pkg_labels_exclude, add_pkg_btn, fleet_success, fleet_error, fleet_tip):
     mo.stop(not add_pkg_btn.value)
     mo.stop(not add_pkg_file.value, fleet_tip("Select a software package file."))
 
@@ -5394,12 +5490,23 @@ def _(mo, json, httpx, fleet_url_input, api_token_input, add_pkg_team_id, add_pk
     if add_pkg_auto_install.value:
         _data["automatic_install"] = "true"
 
+    # Labels - need to send as multiple form fields with same name
+    _labels_include = [l.strip() for l in add_pkg_labels_include.value.split(",") if l.strip()] if add_pkg_labels_include.value else []
+    _labels_exclude = [l.strip() for l in add_pkg_labels_exclude.value.split(",") if l.strip()] if add_pkg_labels_exclude.value else []
+
+    # Convert _data dict to list of tuples for repeated field names (labels)
+    _form_data = list(_data.items())
+    for _label in _labels_include:
+        _form_data.append(("labels_include_any", _label))
+    for _label in _labels_exclude:
+        _form_data.append(("labels_exclude_any", _label))
+
     try:
         _response = httpx.post(
             f"{fleet_url_input.value}/api/v1/fleet/software/package",
             headers={"Authorization": f"Bearer {api_token_input.value}"},
             files=_files,
-            data=_data,
+            data=_form_data,
             timeout=300.0,  # Long timeout for large files
         )
         _status = _response.status_code
@@ -5409,10 +5516,14 @@ def _(mo, json, httpx, fleet_url_input, api_token_input, add_pkg_team_id, add_pk
         _resp_data = {"error": str(e)}
 
     if _status in (200, 201):
+        _pkg = _resp_data.get("software_package", {})
+        _title_id = _pkg.get("title_id", "N/A")
+        _name = _pkg.get("name", _file.name)
         _formatted = json.dumps(_resp_data, indent=2)
         _result = mo.vstack([
-            fleet_success(f"Uploaded package: {_file.name}"),
-            mo.md(f"```json\n{_formatted}\n```"),
+            fleet_success(f"Uploaded package: {_name}"),
+            mo.callout(f"**Software Title ID: `{_title_id}`** — Use this ID to update, delete, or install this software.", kind="success"),
+            mo.accordion({"View Full Response": mo.md(f"```json\n{_formatted}\n```")}),
         ])
     else:
         _result = fleet_error(f"Failed to upload package (status {_status}): {_resp_data}")
@@ -5433,51 +5544,89 @@ Update an existing software package by title ID.
 def _(mo):
     update_pkg_title_id = mo.ui.text(placeholder="Software Title ID", label="Software Title ID", full_width=True)
     update_pkg_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    update_pkg_display_name = mo.ui.text(placeholder="Custom display name (max 255 chars)", label="Display Name", full_width=True)
     update_pkg_file = mo.ui.file(filetypes=[".pkg", ".msi", ".exe", ".deb", ".rpm"], label="New Package (optional)", multiple=False)
     update_pkg_install_script = mo.ui.text_area(placeholder="Install script (leave empty to keep existing)", label="Install Script", rows=3, full_width=True)
     update_pkg_uninstall_script = mo.ui.text_area(placeholder="Uninstall script (leave empty to keep existing)", label="Uninstall Script", rows=3, full_width=True)
+    update_pkg_pre_install_query = mo.ui.text_area(placeholder="SELECT 1 FROM osquery_info WHERE version >= '5.0.0';", label="Pre-install Query", rows=2, full_width=True)
+    update_pkg_post_install_script = mo.ui.text_area(placeholder="Post-install script (leave empty to keep existing)", label="Post-install Script", rows=2, full_width=True)
     update_pkg_self_service = mo.ui.dropdown(options={"Keep existing": "", "Enable": "true", "Disable": "false"}, value="Keep existing", label="Self-service")
+    update_pkg_labels_include = mo.ui.text(placeholder="label1, label2, ...", label="Labels Include Any (comma-separated)", full_width=True)
+    update_pkg_labels_exclude = mo.ui.text(placeholder="label1, label2, ...", label="Labels Exclude Any (comma-separated)", full_width=True)
+    update_pkg_categories = mo.ui.multiselect(
+        options=["Productivity", "Browsers", "Communication", "Developer tools", "Security", "Utilities"],
+        label="Categories",
+    )
     update_pkg_btn = mo.ui.run_button(label="Update Package")
 
     mo.vstack([
         mo.hstack([update_pkg_title_id, update_pkg_team_id], gap=1),
+        update_pkg_display_name,
         update_pkg_file,
         update_pkg_install_script,
         update_pkg_uninstall_script,
+        update_pkg_pre_install_query,
+        update_pkg_post_install_script,
         update_pkg_self_service,
+        mo.md("**Label Targeting** (install only on hosts matching labels)"),
+        update_pkg_labels_include,
+        update_pkg_labels_exclude,
+        update_pkg_categories,
         mo.hstack([update_pkg_btn], justify="start"),
     ])
 
-    return update_pkg_title_id, update_pkg_team_id, update_pkg_file, update_pkg_install_script, update_pkg_uninstall_script, update_pkg_self_service, update_pkg_btn
+    return update_pkg_title_id, update_pkg_team_id, update_pkg_display_name, update_pkg_file, update_pkg_install_script, update_pkg_uninstall_script, update_pkg_pre_install_query, update_pkg_post_install_script, update_pkg_self_service, update_pkg_labels_include, update_pkg_labels_exclude, update_pkg_categories, update_pkg_btn
 
 
 @app.cell
-def _(mo, json, httpx, fleet_url_input, api_token_input, update_pkg_title_id, update_pkg_team_id, update_pkg_file, update_pkg_install_script, update_pkg_uninstall_script, update_pkg_self_service, update_pkg_btn, fleet_success, fleet_error, fleet_tip):
+def _(mo, json, httpx, fleet_url_input, api_token_input, update_pkg_title_id, update_pkg_team_id, update_pkg_display_name, update_pkg_file, update_pkg_install_script, update_pkg_uninstall_script, update_pkg_pre_install_query, update_pkg_post_install_script, update_pkg_self_service, update_pkg_labels_include, update_pkg_labels_exclude, update_pkg_categories, update_pkg_btn, fleet_success, fleet_error, fleet_tip):
     mo.stop(not update_pkg_btn.value)
     mo.stop(not update_pkg_title_id.value, fleet_tip("Enter a Software Title ID."))
 
     _title_id = update_pkg_title_id.value.strip()
-    _files = {}
     _data = {}
 
-    if update_pkg_file.value:
-        _file = update_pkg_file.value[0]
-        _files["software"] = (_file.name, _file.contents, "application/octet-stream")
-    if update_pkg_team_id.value > 0:
-        _data["team_id"] = str(update_pkg_team_id.value)
+    # team_id is required (0 = no team)
+    _data["team_id"] = str(int(update_pkg_team_id.value))
+    if update_pkg_display_name.value:
+        _data["display_name"] = update_pkg_display_name.value
     if update_pkg_install_script.value:
         _data["install_script"] = update_pkg_install_script.value
     if update_pkg_uninstall_script.value:
         _data["uninstall_script"] = update_pkg_uninstall_script.value
+    if update_pkg_pre_install_query.value:
+        _data["pre_install_query"] = update_pkg_pre_install_query.value
+    if update_pkg_post_install_script.value:
+        _data["post_install_script"] = update_pkg_post_install_script.value
     if update_pkg_self_service.value:
         _data["self_service"] = update_pkg_self_service.value
+
+    # Labels - need to send as multiple form fields with same name
+    _labels_include = [l.strip() for l in update_pkg_labels_include.value.split(",") if l.strip()] if update_pkg_labels_include.value else []
+    _labels_exclude = [l.strip() for l in update_pkg_labels_exclude.value.split(",") if l.strip()] if update_pkg_labels_exclude.value else []
+    _categories = update_pkg_categories.value if update_pkg_categories.value else []
+
+    # Build multipart form - all fields go in files dict for proper multipart encoding
+    _multipart = []
+    for _key, _val in _data.items():
+        _multipart.append((_key, (None, _val)))
+    for _label in _labels_include:
+        _multipart.append(("labels_include_any", (None, _label)))
+    for _label in _labels_exclude:
+        _multipart.append(("labels_exclude_any", (None, _label)))
+    for _cat in _categories:
+        _multipart.append(("categories", (None, _cat)))
+
+    # Add file if provided
+    if update_pkg_file.value:
+        _file = update_pkg_file.value[0]
+        _multipart.append(("software", (_file.name, _file.contents, "application/octet-stream")))
 
     try:
         _response = httpx.patch(
             f"{fleet_url_input.value}/api/v1/fleet/software/titles/{_title_id}/package",
             headers={"Authorization": f"Bearer {api_token_input.value}"},
-            files=_files if _files else None,
-            data=_data if _data else None,
+            files=_multipart if _multipart else None,
             timeout=300.0,
         )
         _status = _response.status_code
@@ -5921,6 +6070,291 @@ def _(mo, json, fleet, add_fma_team_id, add_fma_app_id, add_fma_install_script, 
 @app.cell
 def _(mo):
     mo.md("""
+### Batch Add Fleet-Maintained Apps
+
+Add multiple Fleet-maintained apps to a team at once. Enter app names (one per line or comma-separated).
+
+**Available apps:** 1Password, Adobe Acrobat Reader, Box Drive, Brave Browser, Cloudflare WARP, Docker, Figma, Firefox, Google Chrome, Microsoft Edge, Microsoft Excel, Microsoft Teams, Microsoft Word, Notion, Postman, Slack, TeamViewer, Visual Studio Code, WhatsApp, Zoom
+""")
+
+
+@app.cell
+def _(mo):
+    # Static mapping of app names to identifiers (used by Fleet API)
+    FLEET_MAINTAINED_APPS = {
+        "1password": {"name": "1Password", "identifier": "1password"},
+        "adobe acrobat reader": {"name": "Adobe Acrobat Reader", "identifier": "adobe-acrobat-reader"},
+        "box drive": {"name": "Box Drive", "identifier": "box-drive"},
+        "brave browser": {"name": "Brave Browser", "identifier": "brave-browser"},
+        "brave": {"name": "Brave Browser", "identifier": "brave-browser"},
+        "cloudflare warp": {"name": "Cloudflare WARP", "identifier": "cloudflare-warp"},
+        "warp": {"name": "Cloudflare WARP", "identifier": "cloudflare-warp"},
+        "docker": {"name": "Docker Desktop", "identifier": "docker-desktop"},
+        "docker desktop": {"name": "Docker Desktop", "identifier": "docker-desktop"},
+        "figma": {"name": "Figma", "identifier": "figma"},
+        "firefox": {"name": "Firefox", "identifier": "firefox"},
+        "google chrome": {"name": "Google Chrome", "identifier": "google-chrome"},
+        "chrome": {"name": "Google Chrome", "identifier": "google-chrome"},
+        "microsoft edge": {"name": "Microsoft Edge", "identifier": "microsoft-edge"},
+        "edge": {"name": "Microsoft Edge", "identifier": "microsoft-edge"},
+        "microsoft excel": {"name": "Microsoft Excel", "identifier": "microsoft-excel"},
+        "excel": {"name": "Microsoft Excel", "identifier": "microsoft-excel"},
+        "microsoft teams": {"name": "Microsoft Teams", "identifier": "microsoft-teams"},
+        "teams": {"name": "Microsoft Teams", "identifier": "microsoft-teams"},
+        "microsoft word": {"name": "Microsoft Word", "identifier": "microsoft-word"},
+        "word": {"name": "Microsoft Word", "identifier": "microsoft-word"},
+        "notion": {"name": "Notion", "identifier": "notion"},
+        "postman": {"name": "Postman", "identifier": "postman"},
+        "slack": {"name": "Slack", "identifier": "slack"},
+        "teamviewer": {"name": "TeamViewer", "identifier": "teamviewer"},
+        "visual studio code": {"name": "Visual Studio Code", "identifier": "visual-studio-code"},
+        "vscode": {"name": "Visual Studio Code", "identifier": "visual-studio-code"},
+        "vs code": {"name": "Visual Studio Code", "identifier": "visual-studio-code"},
+        "whatsapp": {"name": "WhatsApp", "identifier": "whatsapp"},
+        "zoom": {"name": "Zoom", "identifier": "zoom-for-it-admins"},
+    }
+
+    batch_fma_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    batch_fma_platform = mo.ui.dropdown(
+        options={"macOS": "darwin", "Windows": "windows", "All platforms": ""},
+        value="macOS",
+        label="Platform",
+    )
+    batch_fma_apps = mo.ui.text_area(
+        placeholder="Enter app names, one per line or comma-separated:\nSlack\nZoom\nChrome",
+        label="App Names",
+        rows=6,
+        full_width=True,
+    )
+    batch_fma_self_service = mo.ui.checkbox(label="Self-service")
+    batch_fma_auto_install = mo.ui.checkbox(label="Automatic install")
+    batch_fma_btn = mo.ui.run_button(label="Add Apps to Team")
+
+    mo.vstack([
+        mo.hstack([batch_fma_team_id, batch_fma_platform, batch_fma_self_service, batch_fma_auto_install], gap=2),
+        batch_fma_apps,
+        mo.hstack([batch_fma_btn], justify="start"),
+    ])
+
+    return FLEET_MAINTAINED_APPS, batch_fma_team_id, batch_fma_platform, batch_fma_apps, batch_fma_self_service, batch_fma_auto_install, batch_fma_btn
+
+
+@app.cell
+def _(mo, fleet, FLEET_MAINTAINED_APPS, batch_fma_team_id, batch_fma_platform, batch_fma_apps, batch_fma_self_service, batch_fma_auto_install, batch_fma_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not batch_fma_btn.value)
+    mo.stop(not batch_fma_apps.value.strip(), fleet_tip("Enter app names to add."))
+
+    # Parse app names from input (handle both comma and newline separated)
+    _input_text = batch_fma_apps.value.replace(",", "\n")
+    _app_names = [name.strip().lower() for name in _input_text.split("\n") if name.strip()]
+
+    # Selected platform filter
+    _platform_filter = batch_fma_platform.value  # "darwin", "windows", or "" for all
+
+    # First, get the list of Fleet-maintained apps to get their IDs
+    _team_param = f"?team_id={int(batch_fma_team_id.value)}" if batch_fma_team_id.value >= 0 else ""
+    with mo.status.spinner(title="Fetching Fleet-maintained apps catalog..."):
+        _status, _catalog = fleet("GET", f"/api/v1/fleet/software/fleet_maintained_apps{_team_param}")
+
+    if _status != 200:
+        mo.stop(True, fleet_error(f"Failed to fetch app catalog (status {_status}): {_catalog}. Fleet Premium required."))
+
+    # Build lookup from name/identifier to app ID (filtered by platform)
+    _catalog_apps = _catalog.get("fleet_maintained_apps", [])
+    _app_lookup = {}
+    for _app in _catalog_apps:
+        # Filter by platform if specified
+        if _platform_filter and _app.get("platform") != _platform_filter:
+            continue
+        _app_lookup[_app.get("name", "").lower()] = _app
+        # Also index by identifier slug
+        _slug = _app.get("name", "").lower().replace(" ", "-")
+        _app_lookup[_slug] = _app
+
+    # Match input names to catalog apps
+    _results = []
+    _errors = []
+    _success_count = 0
+
+    with mo.status.spinner(title="Adding apps..."):
+        for _name in _app_names:
+            # Try to find in our static mapping first
+            _mapped = FLEET_MAINTAINED_APPS.get(_name)
+            if _mapped:
+                _lookup_name = _mapped["name"].lower()
+            else:
+                _lookup_name = _name
+
+            # Find in catalog
+            _found_app = _app_lookup.get(_lookup_name)
+            if not _found_app:
+                # Try partial match
+                for _cat_name, _cat_app in _app_lookup.items():
+                    if _name in _cat_name or _cat_name in _name:
+                        _found_app = _cat_app
+                        break
+
+            if not _found_app:
+                _platform_note = f" for {batch_fma_platform.selected_key}" if _platform_filter else ""
+                _errors.append(f"❌ **{_name}**: Not found in Fleet-maintained apps catalog{_platform_note}")
+                continue
+
+            # Check if already added to team
+            if _found_app.get("software_title_id"):
+                _results.append(f"⏭️ **{_found_app['name']}**: Already added (title ID: {_found_app['software_title_id']})")
+                continue
+
+            # Add the app
+            _payload = {
+                "fleet_maintained_app_id": _found_app["id"],
+                "self_service": batch_fma_self_service.value,
+                "automatic_install": batch_fma_auto_install.value,
+            }
+            if batch_fma_team_id.value > 0:
+                _payload["team_id"] = int(batch_fma_team_id.value)
+
+            _add_status, _add_data = fleet("POST", "/api/v1/fleet/software/fleet_maintained_apps", json_data=_payload)
+            if _add_status == 200:
+                _title_id = _add_data.get("software_title_id", "N/A")
+                _results.append(f"✅ **{_found_app['name']}**: Added successfully (title ID: {_title_id})")
+                _success_count += 1
+            else:
+                _err_msg = _add_data.get("message", str(_add_data)) if isinstance(_add_data, dict) else str(_add_data)
+                _errors.append(f"❌ **{_found_app['name']}**: {_err_msg}")
+
+    # Build result output
+    _output_parts = []
+    if _success_count > 0:
+        _output_parts.append(fleet_success(f"Added {_success_count} app(s) to team {int(batch_fma_team_id.value)}"))
+    if _results:
+        _output_parts.append(mo.md("\n".join(_results)))
+    if _errors:
+        _output_parts.append(mo.md("### Errors\n" + "\n".join(_errors)))
+
+    _result = mo.vstack(_output_parts) if _output_parts else mo.md("No apps processed.")
+    _result
+
+
+@app.cell
+def _(mo, FLEET_MAINTAINED_APPS):
+    mo.md("#### Batch Remove Fleet-Maintained Apps")
+
+    batch_rm_team_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Team ID (0 = no team)")
+    batch_rm_platform = mo.ui.dropdown(
+        options={"macOS": "darwin", "Windows": "windows", "All platforms": ""},
+        value="macOS",
+        label="Platform",
+    )
+    batch_rm_apps = mo.ui.text_area(
+        placeholder="Enter app names to remove, one per line or comma-separated:\nSlack\nZoom\nChrome",
+        label="App Names to Remove",
+        rows=6,
+        full_width=True,
+    )
+    batch_rm_btn = mo.ui.run_button(label="Remove Apps from Team", kind="danger")
+
+    mo.vstack([
+        mo.hstack([batch_rm_team_id, batch_rm_platform], gap=2),
+        batch_rm_apps,
+        mo.hstack([batch_rm_btn], justify="start"),
+    ])
+
+    return batch_rm_team_id, batch_rm_platform, batch_rm_apps, batch_rm_btn
+
+
+@app.cell
+def _(mo, fleet, FLEET_MAINTAINED_APPS, batch_rm_team_id, batch_rm_platform, batch_rm_apps, batch_rm_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not batch_rm_btn.value)
+    mo.stop(not batch_rm_apps.value.strip(), fleet_tip("Enter app names to remove."))
+
+    # Parse app names from input (handle both comma and newline separated)
+    _input_text = batch_rm_apps.value.replace(",", "\n")
+    _app_names = [name.strip().lower() for name in _input_text.split("\n") if name.strip()]
+
+    # Selected platform filter
+    _platform_filter = batch_rm_platform.value  # "darwin", "windows", or "" for all
+
+    # First, get the list of Fleet-maintained apps to get their software_title_id
+    _team_param = f"?team_id={int(batch_rm_team_id.value)}" if batch_rm_team_id.value >= 0 else ""
+    with mo.status.spinner(title="Fetching Fleet-maintained apps catalog..."):
+        _status, _catalog = fleet("GET", f"/api/v1/fleet/software/fleet_maintained_apps{_team_param}")
+
+    if _status != 200:
+        mo.stop(True, fleet_error(f"Failed to fetch app catalog (status {_status}): {_catalog}. Fleet Premium required."))
+
+    # Build lookup from name to app (filtered by platform)
+    _catalog_apps = _catalog.get("fleet_maintained_apps", [])
+    _app_lookup = {}
+    for _app in _catalog_apps:
+        # Filter by platform if specified
+        if _platform_filter and _app.get("platform") != _platform_filter:
+            continue
+        _app_lookup[_app.get("name", "").lower()] = _app
+        # Also index by identifier slug
+        _slug = _app.get("name", "").lower().replace(" ", "-")
+        _app_lookup[_slug] = _app
+
+    # Match input names and remove
+    _results = []
+    _errors = []
+    _success_count = 0
+
+    with mo.status.spinner(title="Removing apps..."):
+        for _name in _app_names:
+            # Try to find in our static mapping first
+            _mapped = FLEET_MAINTAINED_APPS.get(_name)
+            if _mapped:
+                _lookup_name = _mapped["name"].lower()
+            else:
+                _lookup_name = _name
+
+            # Find in catalog
+            _found_app = _app_lookup.get(_lookup_name)
+            if not _found_app:
+                # Try partial match
+                for _cat_name, _cat_app in _app_lookup.items():
+                    if _name in _cat_name or _cat_name in _name:
+                        _found_app = _cat_app
+                        break
+
+            if not _found_app:
+                _platform_note = f" for {batch_rm_platform.selected_key}" if _platform_filter else ""
+                _errors.append(f"❌ **{_name}**: Not found in Fleet-maintained apps catalog{_platform_note}")
+                continue
+
+            # Check if it has a software_title_id (meaning it's added to the team)
+            _title_id = _found_app.get("software_title_id")
+            if not _title_id:
+                _results.append(f"⏭️ **{_found_app['name']}**: Not currently added to this team")
+                continue
+
+            # Remove the app (team_id is required per API docs)
+            _del_url = f"/api/v1/fleet/software/titles/{_title_id}/available_for_install?team_id={int(batch_rm_team_id.value)}"
+
+            _del_status, _del_data = fleet("DELETE", _del_url)
+            if _del_status in (200, 204):
+                _results.append(f"✅ **{_found_app['name']}**: Removed successfully (was title ID: {_title_id})")
+                _success_count += 1
+            else:
+                _err_msg = _del_data.get("message", str(_del_data)) if isinstance(_del_data, dict) else str(_del_data)
+                _errors.append(f"❌ **{_found_app['name']}**: {_err_msg}")
+
+    # Build result output
+    _output_parts = []
+    if _success_count > 0:
+        _output_parts.append(fleet_success(f"Removed {_success_count} app(s) from team {int(batch_rm_team_id.value)}"))
+    if _results:
+        _output_parts.append(mo.md("\n".join(_results)))
+    if _errors:
+        _output_parts.append(mo.md("### Errors\n" + "\n".join(_errors)))
+
+    _result = mo.vstack(_output_parts) if _output_parts else mo.md("No apps processed.")
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
 ### Install / Uninstall Software
 
 Install or uninstall software on a specific host.
@@ -6074,6 +6508,484 @@ def _(mo, httpx, fleet_url_input, api_token_input, download_sw_title_id, downloa
         ])
     else:
         _result = fleet_error(f"Failed to download software (status {_status})")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
+## Policies
+
+Policies are yes/no questions you can ask about your hosts using osquery queries.
+A passing host returns results for the policy's query; a failing host does not.
+""")
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### List Policies
+
+List global policies or team-specific policies.
+""")
+
+
+@app.cell
+def _(mo):
+    list_policies_scope = mo.ui.dropdown(
+        options={"Global policies": "global", "Team policies": "team"},
+        value="Global policies",
+        label="Scope",
+    )
+    list_policies_team_id = mo.ui.number(start=1, stop=999999, step=1, value=1, label="Team ID (for team scope)")
+    list_policies_query = mo.ui.text(placeholder="Search by name...", label="Search Query")
+    list_policies_merge_inherited = mo.ui.checkbox(label="Merge inherited (team only)")
+    list_policies_per_page = mo.ui.dropdown(
+        options={"25": "25", "50": "50", "100": "100"},
+        value="50",
+        label="Per Page",
+    )
+    list_policies_page = mo.ui.number(start=0, stop=9999, step=1, value=0, label="Page")
+    list_policies_btn = mo.ui.run_button(label="List Policies")
+
+    mo.vstack([
+        mo.hstack([list_policies_scope, list_policies_team_id, list_policies_query], gap=1),
+        mo.hstack([list_policies_merge_inherited, list_policies_per_page, list_policies_page], gap=1),
+        mo.hstack([list_policies_btn], justify="start"),
+    ])
+
+    return list_policies_scope, list_policies_team_id, list_policies_query, list_policies_merge_inherited, list_policies_per_page, list_policies_page, list_policies_btn
+
+
+@app.cell
+def _(mo, fleet, list_policies_scope, list_policies_team_id, list_policies_query, list_policies_merge_inherited, list_policies_per_page, list_policies_page, list_policies_btn, fleet_error, fleet_output):
+    mo.stop(not list_policies_btn.value)
+
+    _params = [f"per_page={list_policies_per_page.value}", f"page={list_policies_page.value}"]
+    if list_policies_query.value:
+        _params.append(f"query={list_policies_query.value}")
+
+    if list_policies_scope.value == "global":
+        _endpoint = "/api/v1/fleet/global/policies"
+    else:
+        _endpoint = f"/api/v1/fleet/teams/{int(list_policies_team_id.value)}/policies"
+        if list_policies_merge_inherited.value:
+            _params.append("merge_inherited=true")
+
+    _query_str = "?" + "&".join(_params) if _params else ""
+
+    with mo.status.spinner(title="Fetching policies..."):
+        _status, _data = fleet("GET", f"{_endpoint}{_query_str}")
+
+    if _status == 200:
+        _policies = _data.get("policies", [])
+        _inherited = _data.get("inherited_policies", [])
+        if _policies:
+            _result = fleet_output(f"Found {len(_policies)} policies", _policies)
+            if _inherited:
+                _result = mo.vstack([_result, fleet_output(f"Inherited policies: {len(_inherited)}", _inherited)])
+        else:
+            _result = mo.md("**No policies found.**")
+    else:
+        _result = fleet_error(f"Failed to list policies (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Get Policies Count
+
+Get the count of policies (global or team).
+""")
+
+
+@app.cell
+def _(mo):
+    count_policies_scope = mo.ui.dropdown(
+        options={"Global": "global", "Team": "team"},
+        value="Global",
+        label="Scope",
+    )
+    count_policies_team_id = mo.ui.number(start=1, stop=999999, step=1, value=1, label="Team ID")
+    count_policies_query = mo.ui.text(placeholder="Search by name...", label="Search Query")
+    count_policies_merge = mo.ui.checkbox(label="Include inherited (team only)")
+    count_policies_btn = mo.ui.run_button(label="Get Count")
+
+    mo.vstack([
+        mo.hstack([count_policies_scope, count_policies_team_id, count_policies_query, count_policies_merge], gap=1),
+        mo.hstack([count_policies_btn], justify="start"),
+    ])
+
+    return count_policies_scope, count_policies_team_id, count_policies_query, count_policies_merge, count_policies_btn
+
+
+@app.cell
+def _(mo, fleet, count_policies_scope, count_policies_team_id, count_policies_query, count_policies_merge, count_policies_btn, fleet_success, fleet_error):
+    mo.stop(not count_policies_btn.value)
+
+    _params = []
+    if count_policies_query.value:
+        _params.append(f"query={count_policies_query.value}")
+
+    if count_policies_scope.value == "global":
+        _endpoint = "/api/v1/fleet/policies/count"
+    else:
+        _endpoint = f"/api/v1/fleet/team/{int(count_policies_team_id.value)}/policies/count"
+        if count_policies_merge.value:
+            _params.append("merge_inherited=true")
+
+    _query_str = "?" + "&".join(_params) if _params else ""
+    _status, _data = fleet("GET", f"{_endpoint}{_query_str}")
+
+    if _status == 200:
+        _count = _data.get("count", 0)
+        _result = fleet_success(f"Policy count: {_count}")
+    else:
+        _result = fleet_error(f"Failed to get count (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Get Policy
+
+Get a specific policy by ID (global or team).
+""")
+
+
+@app.cell
+def _(mo):
+    get_policy_scope = mo.ui.dropdown(
+        options={"Global": "global", "Team": "team"},
+        value="Global",
+        label="Scope",
+    )
+    get_policy_id = mo.ui.number(start=1, stop=999999, step=1, value=1, label="Policy ID")
+    get_policy_team_id = mo.ui.number(start=1, stop=999999, step=1, value=1, label="Team ID (for team scope)")
+    get_policy_btn = mo.ui.run_button(label="Get Policy")
+
+    mo.vstack([
+        mo.hstack([get_policy_scope, get_policy_id, get_policy_team_id], gap=1),
+        mo.hstack([get_policy_btn], justify="start"),
+    ])
+
+    return get_policy_scope, get_policy_id, get_policy_team_id, get_policy_btn
+
+
+@app.cell
+def _(mo, fleet, get_policy_scope, get_policy_id, get_policy_team_id, get_policy_btn, fleet_error, fleet_output):
+    mo.stop(not get_policy_btn.value)
+
+    if get_policy_scope.value == "global":
+        _endpoint = f"/api/v1/fleet/global/policies/{int(get_policy_id.value)}"
+    else:
+        _endpoint = f"/api/v1/fleet/teams/{int(get_policy_team_id.value)}/policies/{int(get_policy_id.value)}"
+
+    _status, _data = fleet("GET", _endpoint)
+
+    if _status == 200:
+        _policy = _data.get("policy", {})
+        _result = fleet_output(f"Policy: {_policy.get('name', 'Unknown')}", _policy)
+    else:
+        _result = fleet_error(f"Failed to get policy (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Create Policy
+
+Create a new global or team policy.
+""")
+
+
+@app.cell
+def _(mo):
+    create_policy_scope = mo.ui.dropdown(
+        options={"Global": "global", "Team": "team"},
+        value="Global",
+        label="Scope",
+    )
+    create_policy_team_id = mo.ui.number(start=1, stop=999999, step=1, value=1, label="Team ID (for team scope)")
+    create_policy_name = mo.ui.text(placeholder="Policy name", label="Name", full_width=True)
+    create_policy_query = mo.ui.text_area(placeholder="SELECT 1 FROM ... WHERE ...;", label="Query (SQL)", rows=3, full_width=True)
+    create_policy_description = mo.ui.text_area(placeholder="What this policy checks", label="Description", rows=2, full_width=True)
+    create_policy_resolution = mo.ui.text_area(placeholder="Steps to resolve if failing", label="Resolution", rows=2, full_width=True)
+    create_policy_platform = mo.ui.dropdown(
+        options={"All platforms": "", "macOS": "darwin", "Windows": "windows", "Linux": "linux", "macOS & Windows": "darwin,windows", "macOS & Linux": "darwin,linux"},
+        value="All platforms",
+        label="Platform",
+    )
+    create_policy_critical = mo.ui.checkbox(label="Critical (high impact)")
+    create_policy_software_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Software Title ID (0 = none, team only)")
+    create_policy_script_id = mo.ui.number(start=0, stop=999999, step=1, value=0, label="Script ID (0 = none, team only)")
+    create_policy_btn = mo.ui.run_button(label="Create Policy")
+
+    mo.vstack([
+        mo.hstack([create_policy_scope, create_policy_team_id, create_policy_platform, create_policy_critical], gap=1),
+        create_policy_name,
+        create_policy_query,
+        create_policy_description,
+        create_policy_resolution,
+        mo.hstack([create_policy_software_id, create_policy_script_id], gap=1),
+        mo.hstack([create_policy_btn], justify="start"),
+    ])
+
+    return create_policy_scope, create_policy_team_id, create_policy_name, create_policy_query, create_policy_description, create_policy_resolution, create_policy_platform, create_policy_critical, create_policy_software_id, create_policy_script_id, create_policy_btn
+
+
+@app.cell
+def _(mo, fleet, create_policy_scope, create_policy_team_id, create_policy_name, create_policy_query, create_policy_description, create_policy_resolution, create_policy_platform, create_policy_critical, create_policy_software_id, create_policy_script_id, create_policy_btn, fleet_error, fleet_output, fleet_tip):
+    mo.stop(not create_policy_btn.value)
+    mo.stop(not create_policy_name.value, fleet_tip("Enter a policy name."))
+    mo.stop(not create_policy_query.value, fleet_tip("Enter a policy query."))
+
+    _payload = {
+        "name": create_policy_name.value,
+        "query": create_policy_query.value,
+    }
+    if create_policy_description.value:
+        _payload["description"] = create_policy_description.value
+    if create_policy_resolution.value:
+        _payload["resolution"] = create_policy_resolution.value
+    if create_policy_platform.value:
+        _payload["platform"] = create_policy_platform.value
+    if create_policy_critical.value:
+        _payload["critical"] = True
+
+    if create_policy_scope.value == "global":
+        _endpoint = "/api/v1/fleet/global/policies"
+    else:
+        _endpoint = f"/api/v1/fleet/teams/{int(create_policy_team_id.value)}/policies"
+        if create_policy_software_id.value > 0:
+            _payload["software_title_id"] = int(create_policy_software_id.value)
+        if create_policy_script_id.value > 0:
+            _payload["script_id"] = int(create_policy_script_id.value)
+
+    _status, _data = fleet("POST", _endpoint, json_data=_payload)
+
+    if _status == 200:
+        _policy = _data.get("policy", {})
+        _result = fleet_output(f"Created policy: {_policy.get('name', 'Unknown')} (ID: {_policy.get('id', 'N/A')})", _policy)
+    else:
+        _result = fleet_error(f"Failed to create policy (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Update Policy
+
+Update an existing global or team policy.
+""")
+
+
+@app.cell
+def _(mo):
+    update_policy_scope = mo.ui.dropdown(
+        options={"Global": "global", "Team": "team"},
+        value="Global",
+        label="Scope",
+    )
+    update_policy_id = mo.ui.number(start=1, stop=999999, step=1, value=1, label="Policy ID")
+    update_policy_team_id = mo.ui.number(start=1, stop=999999, step=1, value=1, label="Team ID (for team scope)")
+    update_policy_name = mo.ui.text(placeholder="Policy name (leave empty to keep)", label="Name", full_width=True)
+    update_policy_query = mo.ui.text_area(placeholder="SQL query (leave empty to keep)", label="Query", rows=3, full_width=True)
+    update_policy_description = mo.ui.text_area(placeholder="Description (leave empty to keep)", label="Description", rows=2, full_width=True)
+    update_policy_resolution = mo.ui.text_area(placeholder="Resolution (leave empty to keep)", label="Resolution", rows=2, full_width=True)
+    update_policy_platform = mo.ui.dropdown(
+        options={"Keep existing": "", "All platforms": "all", "macOS": "darwin", "Windows": "windows", "Linux": "linux"},
+        value="Keep existing",
+        label="Platform",
+    )
+    update_policy_critical = mo.ui.dropdown(
+        options={"Keep existing": "", "Yes": "true", "No": "false"},
+        value="Keep existing",
+        label="Critical",
+    )
+    update_policy_calendar = mo.ui.dropdown(
+        options={"Keep existing": "", "Enable": "true", "Disable": "false"},
+        value="Keep existing",
+        label="Calendar Events (team)",
+    )
+    update_policy_conditional = mo.ui.dropdown(
+        options={"Keep existing": "", "Enable": "true", "Disable": "false"},
+        value="Keep existing",
+        label="Conditional Access (team)",
+    )
+    update_policy_btn = mo.ui.run_button(label="Update Policy")
+
+    mo.vstack([
+        mo.hstack([update_policy_scope, update_policy_id, update_policy_team_id], gap=1),
+        update_policy_name,
+        update_policy_query,
+        update_policy_description,
+        update_policy_resolution,
+        mo.hstack([update_policy_platform, update_policy_critical, update_policy_calendar, update_policy_conditional], gap=1),
+        mo.hstack([update_policy_btn], justify="start"),
+    ])
+
+    return update_policy_scope, update_policy_id, update_policy_team_id, update_policy_name, update_policy_query, update_policy_description, update_policy_resolution, update_policy_platform, update_policy_critical, update_policy_calendar, update_policy_conditional, update_policy_btn
+
+
+@app.cell
+def _(mo, fleet, update_policy_scope, update_policy_id, update_policy_team_id, update_policy_name, update_policy_query, update_policy_description, update_policy_resolution, update_policy_platform, update_policy_critical, update_policy_calendar, update_policy_conditional, update_policy_btn, fleet_error, fleet_output):
+    mo.stop(not update_policy_btn.value)
+
+    _payload = {}
+    if update_policy_name.value:
+        _payload["name"] = update_policy_name.value
+    if update_policy_query.value:
+        _payload["query"] = update_policy_query.value
+    if update_policy_description.value:
+        _payload["description"] = update_policy_description.value
+    if update_policy_resolution.value:
+        _payload["resolution"] = update_policy_resolution.value
+    if update_policy_platform.value:
+        _payload["platform"] = "" if update_policy_platform.value == "all" else update_policy_platform.value
+    if update_policy_critical.value:
+        _payload["critical"] = update_policy_critical.value == "true"
+
+    if update_policy_scope.value == "global":
+        _endpoint = f"/api/v1/fleet/global/policies/{int(update_policy_id.value)}"
+    else:
+        _endpoint = f"/api/v1/fleet/teams/{int(update_policy_team_id.value)}/policies/{int(update_policy_id.value)}"
+        if update_policy_calendar.value:
+            _payload["calendar_events_enabled"] = update_policy_calendar.value == "true"
+        if update_policy_conditional.value:
+            _payload["conditional_access_enabled"] = update_policy_conditional.value == "true"
+
+    _status, _data = fleet("PATCH", _endpoint, json_data=_payload)
+
+    if _status == 200:
+        _policy = _data.get("policy", {})
+        _result = fleet_output(f"Updated policy: {_policy.get('name', 'Unknown')}", _policy)
+    else:
+        _result = fleet_error(f"Failed to update policy (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Delete Policies
+
+Delete one or more policies (global or team).
+""")
+
+
+@app.cell
+def _(mo):
+    delete_policies_scope = mo.ui.dropdown(
+        options={"Global": "global", "Team": "team"},
+        value="Global",
+        label="Scope",
+    )
+    delete_policies_team_id = mo.ui.number(start=1, stop=999999, step=1, value=1, label="Team ID (for team scope)")
+    delete_policies_ids = mo.ui.text(placeholder="1, 2, 3", label="Policy IDs (comma-separated)", full_width=True)
+    delete_policies_btn = mo.ui.run_button(label="Delete Policies")
+
+    mo.vstack([
+        mo.hstack([delete_policies_scope, delete_policies_team_id], gap=1),
+        delete_policies_ids,
+        mo.hstack([delete_policies_btn], justify="start"),
+    ])
+
+    return delete_policies_scope, delete_policies_team_id, delete_policies_ids, delete_policies_btn
+
+
+@app.cell
+def _(mo, fleet, delete_policies_scope, delete_policies_team_id, delete_policies_ids, delete_policies_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not delete_policies_btn.value)
+    mo.stop(not delete_policies_ids.value, fleet_tip("Enter policy IDs to delete."))
+
+    _ids = [int(x.strip()) for x in delete_policies_ids.value.split(",") if x.strip().isdigit()]
+    if not _ids:
+        mo.stop(True, fleet_tip("Enter valid policy IDs (numbers)."))
+
+    _payload = {"ids": _ids}
+
+    if delete_policies_scope.value == "global":
+        _endpoint = "/api/v1/fleet/global/policies/delete"
+    else:
+        _endpoint = f"/api/v1/fleet/teams/{int(delete_policies_team_id.value)}/policies/delete"
+
+    _status, _data = fleet("POST", _endpoint, json_data=_payload)
+
+    if _status == 200:
+        _deleted = _data.get("deleted", 0)
+        _result = fleet_success(f"Deleted {_deleted} policy(ies)")
+    else:
+        _result = fleet_error(f"Failed to delete policies (status {_status}): {_data}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+### Reset Policy Automations
+
+Reset automation status for all hosts failing the specified policies. On the next automation run, any failing host will be considered newly failing.
+
+**Note:** Currently only resets ticket and webhook automations. Team IDs filter requires Fleet Premium.
+""")
+
+
+@app.cell
+def _(mo):
+    reset_auto_policy_ids = mo.ui.text(placeholder="1, 2, 3", label="Policy IDs (comma-separated)", full_width=True)
+    reset_auto_team_ids = mo.ui.text(placeholder="1, 2 (Premium, must be > 0)", label="Team IDs (comma-separated, optional)", full_width=True)
+    reset_auto_btn = mo.ui.run_button(label="Reset Automations")
+
+    mo.vstack([
+        reset_auto_policy_ids,
+        reset_auto_team_ids,
+        mo.hstack([reset_auto_btn], justify="start"),
+    ])
+
+    return reset_auto_policy_ids, reset_auto_team_ids, reset_auto_btn
+
+
+@app.cell
+def _(mo, fleet, reset_auto_policy_ids, reset_auto_team_ids, reset_auto_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not reset_auto_btn.value)
+
+    _payload = {}
+
+    if reset_auto_policy_ids.value:
+        # Policy IDs must be > 0
+        _policy_ids = [int(x.strip()) for x in reset_auto_policy_ids.value.split(",") if x.strip().isdigit() and int(x.strip()) > 0]
+        if _policy_ids:
+            _payload["policy_ids"] = _policy_ids
+
+    if reset_auto_team_ids.value:
+        # Team IDs must be > 0 (0 is not valid for this endpoint)
+        _team_ids = [int(x.strip()) for x in reset_auto_team_ids.value.split(",") if x.strip().isdigit() and int(x.strip()) > 0]
+        if _team_ids:
+            _payload["team_ids"] = _team_ids
+
+    if not _payload:
+        mo.stop(True, fleet_tip("Enter valid policy IDs (> 0). Team IDs filter requires Premium."))
+
+    _status, _data = fleet("POST", "/api/v1/fleet/automations/reset", json_data=_payload)
+
+    if _status == 200:
+        _result = fleet_success("Policy automations reset successfully")
+    else:
+        _result = fleet_error(f"Failed to reset automations (status {_status}): {_data}")
 
     _result
 
