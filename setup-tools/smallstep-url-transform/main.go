@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -41,6 +42,49 @@ func main() {
 		challengeURL = prompt(reader, fmt.Sprintf("%sEnter Smallstep Challenge URL:%s ", Yellow, Reset))
 	}
 
+	// 3. Get Root CA certificate (optional)
+	fmt.Println()
+	fmt.Printf("%sEnter path to Smallstep ROOT CA certificate PEM file (press Enter to skip)%s\n", Dim, Reset)
+	fmt.Printf("%s(Download from Smallstep dashboard or use: step ca root root_ca.crt --ca-url <URL> --fingerprint <FP>)%s\n", Dim, Reset)
+	rootCertPEM := ""
+	rootCertPath := prompt(reader, fmt.Sprintf("%sRoot CA certificate file path:%s ", Yellow, Reset))
+	if rootCertPath != "" {
+		rootCertPath = expandPath(rootCertPath)
+		content, err := os.ReadFile(rootCertPath)
+		if err != nil {
+			fmt.Printf("%sError reading file: %v%s\n", Yellow, err, Reset)
+		} else if !strings.Contains(string(content), "BEGIN CERTIFICATE") {
+			fmt.Printf("%sFile does not appear to be a PEM certificate.%s\n", Yellow, Reset)
+		} else {
+			rootCertPEM = string(content)
+			fmt.Printf("%sRoot CA certificate loaded.%s\n", Green, Reset)
+		}
+	} else {
+		fmt.Printf("%sSkipping root CA (no cert provided).%s\n", Dim, Reset)
+	}
+
+	// 4. Get Intermediate CA certificate (optional, only if root was provided)
+	intermediateCertPEM := ""
+	if rootCertPEM != "" {
+		fmt.Println()
+		fmt.Printf("%sEnter path to Smallstep INTERMEDIATE CA certificate PEM file (press Enter to skip)%s\n", Dim, Reset)
+		intermediateCertPath := prompt(reader, fmt.Sprintf("%sIntermediate CA certificate file path:%s ", Yellow, Reset))
+		if intermediateCertPath != "" {
+			intermediateCertPath = expandPath(intermediateCertPath)
+			content, err := os.ReadFile(intermediateCertPath)
+			if err != nil {
+				fmt.Printf("%sError reading file: %v%s\n", Yellow, err, Reset)
+			} else if !strings.Contains(string(content), "BEGIN CERTIFICATE") {
+				fmt.Printf("%sFile does not appear to be a PEM certificate.%s\n", Yellow, Reset)
+			} else {
+				intermediateCertPEM = string(content)
+				fmt.Printf("%sIntermediate CA certificate loaded.%s\n", Green, Reset)
+			}
+		} else {
+			fmt.Printf("%sSkipping intermediate CA (no cert provided).%s\n", Dim, Reset)
+		}
+	}
+
 	// Parse URLs
 	teamName, integrationID := parseURLs(scepURL, challengeURL)
 	if teamName == "" || integrationID == "" {
@@ -61,11 +105,11 @@ func main() {
 		}
 		caNameUpper := normalizeCaName(caName)
 
-		// Ask about mobileconfig
-		genConfig := prompt(reader, fmt.Sprintf("%sGenerate mobileconfig file?%s (y/N): ", Yellow, Reset))
+		// Ask about SCEP mobileconfig
+		genConfig := prompt(reader, fmt.Sprintf("%sGenerate SCEP mobileconfig file?%s (y/N): ", Yellow, Reset))
 		wantConfig := strings.ToLower(genConfig) == "y" || strings.ToLower(genConfig) == "yes"
 
-		var payloadID, outputFile, rootUUID, scepUUID string
+		var payloadID, outputFile, profileUUID, scepUUID string
 		if wantConfig {
 			defaultID := fmt.Sprintf("com.fleetdm.scep.%s", strings.ToLower(caNameUpper))
 			payloadID = prompt(reader, fmt.Sprintf("%sEnter PayloadIdentifier%s [%s]: ", Yellow, Reset, defaultID))
@@ -79,7 +123,7 @@ func main() {
 				outputFile = defaultFile
 			}
 
-			rootUUID = generateUUID(payloadID)
+			profileUUID = generateUUID(payloadID)
 			scepUUID = generateUUID("com.apple.security.scep." + payloadID)
 		}
 
@@ -95,8 +139,8 @@ func main() {
 		fmt.Printf("%s%s============================================%s\n", Bold, Cyan, Reset)
 		fmt.Println()
 		fmt.Printf("%sName%s\n", Dim, Reset)
-		fmt.Printf("%s%s%s\n", Bold, Green, caNameUpper)
-		fmt.Printf("%s\n", Reset)
+		fmt.Printf("%s%s%s\n", Bold+Green, caNameUpper, Reset)
+		fmt.Println()
 		fmt.Printf("%sSCEP URL%s\n", Dim, Reset)
 		fmt.Printf("%s%s%s\n", Green, fleetProxyURL, Reset)
 		fmt.Println()
@@ -118,22 +162,65 @@ func main() {
 		fmt.Printf("%s* Original Smallstep SCEP URL: %s%s\n", Dim, scepURL, Reset)
 		fmt.Printf("%s* Detected team: %s, integration: %s%s\n", Dim, teamName, integrationID, Reset)
 
-		// Generate mobileconfig if requested
+		// Generate SCEP mobileconfig if requested
 		if wantConfig {
-			if err := writeMobileconfig(outputFile, payloadID, caNameUpper, challengeVar, proxyVar, renewalVar, rootUUID, scepUUID); err != nil {
+			if err := writeSCEPMobileconfig(outputFile, payloadID, caNameUpper, challengeVar, proxyVar, renewalVar, profileUUID, scepUUID); err != nil {
 				fmt.Printf("\n%sError writing mobileconfig: %v%s\n", Yellow, err, Reset)
 			} else {
 				fmt.Println()
 				fmt.Printf("%s%s--------------------------------------------%s\n", Bold, Green, Reset)
-				fmt.Printf("%s%sGenerated mobileconfig%s\n", Bold, Green, Reset)
+				fmt.Printf("%s%sGenerated SCEP mobileconfig%s\n", Bold, Green, Reset)
 				fmt.Printf("%s%s--------------------------------------------%s\n", Bold, Green, Reset)
 				fmt.Println()
 				fmt.Printf("  %sFile:%s %s%s%s\n", Dim, Reset, Green, outputFile, Reset)
 				fmt.Println()
-				fmt.Printf("  %sRoot PayloadIdentifier:%s %s\n", Dim, Reset, payloadID)
-				fmt.Printf("  %sRoot PayloadUUID:%s       %s\n", Dim, Reset, rootUUID)
-				fmt.Printf("  %sSCEP PayloadIdentifier:%s com.apple.security.scep.%s\n", Dim, Reset, scepUUID)
-				fmt.Printf("  %sSCEP PayloadUUID:%s       %s\n", Dim, Reset, scepUUID)
+				fmt.Printf("  %sProfile PayloadIdentifier:%s %s\n", Dim, Reset, payloadID)
+				fmt.Printf("  %sProfile PayloadUUID:%s       %s\n", Dim, Reset, profileUUID)
+				fmt.Printf("  %sSCEP PayloadIdentifier:%s    com.apple.security.scep.%s\n", Dim, Reset, scepUUID)
+				fmt.Printf("  %sSCEP PayloadUUID:%s          %s\n", Dim, Reset, scepUUID)
+			}
+		}
+
+		// Generate Trust mobileconfig if CA certs provided
+		if rootCertPEM != "" {
+			genTrust := prompt(reader, fmt.Sprintf("\n%sGenerate CA trust mobileconfig?%s (y/N): ", Yellow, Reset))
+			if strings.ToLower(genTrust) == "y" || strings.ToLower(genTrust) == "yes" {
+				defaultTrustFile := fmt.Sprintf("smallstep-trust-%s.mobileconfig", strings.ToLower(caNameUpper))
+				trustFile := prompt(reader, fmt.Sprintf("%sTrust profile filename%s [%s]: ", Yellow, Reset, defaultTrustFile))
+				if trustFile == "" {
+					trustFile = defaultTrustFile
+				}
+
+				// Use same payloadID base or generate one
+				trustPayloadID := payloadID
+				if trustPayloadID == "" {
+					trustPayloadID = fmt.Sprintf("com.fleetdm.scep.%s", strings.ToLower(caNameUpper))
+				}
+
+				trustProfileUUID := generateUUID("trust." + trustPayloadID)
+				rootCertUUID := generateUUID("com.apple.security.root." + trustPayloadID)
+				intermediateCertUUID := ""
+				if intermediateCertPEM != "" {
+					intermediateCertUUID = generateUUID("com.apple.security.pkcs1.intermediate." + trustPayloadID)
+				}
+
+				if err := writeTrustMobileconfig(trustFile, trustPayloadID, caNameUpper, rootCertPEM, intermediateCertPEM, trustProfileUUID, rootCertUUID, intermediateCertUUID); err != nil {
+					fmt.Printf("\n%sError writing trust mobileconfig: %v%s\n", Yellow, err, Reset)
+				} else {
+					fmt.Println()
+					fmt.Printf("%s%s--------------------------------------------%s\n", Bold, Green, Reset)
+					fmt.Printf("%s%sGenerated CA Trust mobileconfig (Device Channel)%s\n", Bold, Green, Reset)
+					fmt.Printf("%s%s--------------------------------------------%s\n", Bold, Green, Reset)
+					fmt.Println()
+					fmt.Printf("  %sFile:%s %s%s%s\n", Dim, Reset, Green, trustFile, Reset)
+					fmt.Println()
+					fmt.Printf("  %sProfile PayloadIdentifier:%s trust.%s\n", Dim, Reset, trustPayloadID)
+					fmt.Printf("  %sProfile PayloadUUID:%s       %s\n", Dim, Reset, trustProfileUUID)
+					fmt.Printf("  %sRoot CA PayloadUUID:%s       %s\n", Dim, Reset, rootCertUUID)
+					if intermediateCertUUID != "" {
+						fmt.Printf("  %sIntermediate CA PayloadUUID:%s %s\n", Dim, Reset, intermediateCertUUID)
+					}
+				}
 			}
 		}
 
@@ -151,6 +238,16 @@ func prompt(reader *bufio.Reader, msg string) string {
 	fmt.Print(msg)
 	input, _ := reader.ReadString('\n')
 	return strings.TrimSpace(input)
+}
+
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
 }
 
 func normalizeCaName(name string) string {
@@ -199,7 +296,21 @@ func generateUUID(input string) string {
 		hash[0:4], hash[4:6], hash[6:8], hash[8:10], hash[10:16]))
 }
 
-func writeMobileconfig(filename, payloadID, caName, challengeVar, proxyVar, renewalVar, rootUUID, scepUUID string) error {
+func pemToBase64(pem string) string {
+	// Strip PEM headers and join lines
+	lines := strings.Split(pem, "\n")
+	var b64Lines []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(line, "BEGIN CERTIFICATE") || strings.Contains(line, "END CERTIFICATE") {
+			continue
+		}
+		b64Lines = append(b64Lines, line)
+	}
+	return strings.Join(b64Lines, "")
+}
+
+func writeSCEPMobileconfig(filename, payloadID, caName, challengeVar, proxyVar, renewalVar, profileUUID, scepUUID string) error {
 	content := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -257,6 +368,8 @@ func writeMobileconfig(filename, payloadID, caName, challengeVar, proxyVar, rene
     <string>Smallstep SCEP - %s</string>
     <key>PayloadIdentifier</key>
     <string>%s</string>
+    <key>PayloadScope</key>
+    <string>System</string>
     <key>PayloadType</key>
     <string>Configuration</string>
     <key>PayloadUUID</key>
@@ -265,7 +378,77 @@ func writeMobileconfig(filename, payloadID, caName, challengeVar, proxyVar, rene
     <integer>1</integer>
 </dict>
 </plist>
-`, challengeVar, renewalVar, proxyVar, caName, scepUUID, scepUUID, caName, payloadID, rootUUID)
+`, challengeVar, renewalVar, proxyVar, caName, scepUUID, scepUUID, caName, payloadID, profileUUID)
+
+	return os.WriteFile(filename, []byte(content), 0644)
+}
+
+func writeTrustMobileconfig(filename, payloadID, caName, rootCertPEM, intermediateCertPEM, profileUUID, rootCertUUID, intermediateCertUUID string) error {
+	rootCertBase64 := pemToBase64(rootCertPEM)
+
+	// Build payload content
+	payloadContent := fmt.Sprintf(`        <dict>
+            <key>PayloadCertificateFileName</key>
+            <string>smallstep-root-ca.cer</string>
+            <key>PayloadContent</key>
+            <data>%s</data>
+            <key>PayloadDisplayName</key>
+            <string>Smallstep Root CA</string>
+            <key>PayloadIdentifier</key>
+            <string>com.apple.security.root.%s</string>
+            <key>PayloadType</key>
+            <string>com.apple.security.root</string>
+            <key>PayloadUUID</key>
+            <string>%s</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>`, rootCertBase64, rootCertUUID, rootCertUUID)
+
+	// Add intermediate cert if provided
+	if intermediateCertPEM != "" {
+		intermediateCertBase64 := pemToBase64(intermediateCertPEM)
+		payloadContent += fmt.Sprintf(`
+        <dict>
+            <key>PayloadCertificateFileName</key>
+            <string>smallstep-intermediate-ca.cer</string>
+            <key>PayloadContent</key>
+            <data>%s</data>
+            <key>PayloadDisplayName</key>
+            <string>Smallstep Intermediate CA</string>
+            <key>PayloadIdentifier</key>
+            <string>com.apple.security.pkcs1.%s</string>
+            <key>PayloadType</key>
+            <string>com.apple.security.pkcs1</string>
+            <key>PayloadUUID</key>
+            <string>%s</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>`, intermediateCertBase64, intermediateCertUUID, intermediateCertUUID)
+	}
+
+	content := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+%s
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>Smallstep CA Trust - %s</string>
+    <key>PayloadIdentifier</key>
+    <string>trust.%s</string>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>%s</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
+`, payloadContent, caName, payloadID, profileUUID)
 
 	return os.WriteFile(filename, []byte(content), 0644)
 }
