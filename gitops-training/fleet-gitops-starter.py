@@ -9,8 +9,8 @@
 # description = """
 # Fleet Demo Notebook - API testing and GitOps training essentials.
 # Combines Fleet API exploration with GitHub repository secrets setup.
-# """
 # Copyright (c) 2026 Henry Stamerjohann, for Fleet Device Management
+# """
 # ///
 
 import marimo

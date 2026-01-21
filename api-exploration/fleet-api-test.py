@@ -8,8 +8,8 @@
 # ]
 # description = """
 # Fleet API Test Notebook - Test and explore your Fleet instance API endpoints.
-# """
 # Copyright (c) 2026 Henry Stamerjohann, for Fleet Device Management
+# """
 # ///
 
 import marimo
