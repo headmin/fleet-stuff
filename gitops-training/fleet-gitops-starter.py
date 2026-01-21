@@ -384,12 +384,14 @@ def _(os, subprocess, Path):
     # Get values from env file or environment variables
     _fleet_url_env = _env_vars.get("FLEET_URL", os.environ.get("FLEET_URL", ""))
     _fleet_token_env = _env_vars.get("FLEET_API_TOKEN", os.environ.get("FLEET_API_TOKEN", ""))
+    _fleetctl_path_env = _env_vars.get("FLEETCTL_PATH", os.environ.get("FLEETCTL_PATH", ""))
 
     # Resolve 1Password references
     env_fleet_url = resolve_op_reference(_fleet_url_env)
     env_fleet_token = resolve_op_reference(_fleet_token_env)
+    env_fleetctl_path = resolve_op_reference(_fleetctl_path_env)
 
-    return resolve_op_reference, load_env_file, env_fleet_url, env_fleet_token
+    return resolve_op_reference, load_env_file, env_fleet_url, env_fleet_token, env_fleetctl_path
 
 
 @app.cell
@@ -541,7 +543,7 @@ def _(mo):
             "List Queries": "/api/v1/fleet/queries",
             "List Labels": "/api/v1/fleet/labels",
         },
-        value="/api/v1/fleet/me",
+        value="Get Current User",
         label="Select Endpoint",
     )
 
@@ -577,6 +579,99 @@ def _(mo, httpx, json, fleet_url_input, api_token_input, endpoint_select, run_en
                 fleet_success(f"GET {_endpoint}"),
                 mo.md(f"```json\n{_formatted[:5000]}{'...' if len(_formatted) > 5000 else ''}\n```"),
             ])
+        else:
+            _result = fleet_error(f"Status {_response.status_code}: {_response.text[:500]}")
+
+    except Exception as e:
+        _result = fleet_error(f"Error: {str(e)}")
+
+    _result
+
+
+# =============================================================================
+# SECTION 2B: HOST LOOKUP
+# =============================================================================
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+---
+
+### Host Lookup
+
+Search and browse hosts in your Fleet instance:
+""")
+
+
+@app.cell
+def _(mo):
+    host_search_input = mo.ui.text(
+        placeholder="Search by hostname, serial, UUID...",
+        label="Search Hosts",
+        full_width=True,
+    )
+
+    hosts_per_page = mo.ui.dropdown(
+        options={"10": "10", "25": "25", "50": "50", "100": "100"},
+        value="25",
+        label="Per Page",
+    )
+
+    fetch_hosts_btn = mo.ui.run_button(label="Search Hosts")
+
+    mo.hstack([host_search_input, hosts_per_page, fetch_hosts_btn], justify="start", gap=1)
+
+    return host_search_input, hosts_per_page, fetch_hosts_btn
+
+
+@app.cell
+def _(mo, httpx, fleet_url_input, api_token_input, host_search_input, hosts_per_page, fetch_hosts_btn, fleet_success, fleet_error, fleet_tip):
+    mo.stop(not fetch_hosts_btn.value, fleet_tip("Enter a search term and click **Search Hosts** to find hosts."))
+
+    _url = fleet_url_input.value.rstrip("/")
+    _token = api_token_input.value
+
+    if not _url or not _token:
+        mo.stop(True, fleet_error("Please configure Fleet URL and API Token above."))
+
+    _search = host_search_input.value.strip() if host_search_input.value else ""
+    _per_page = hosts_per_page.value
+
+    _endpoint = f"/api/v1/fleet/hosts?per_page={_per_page}"
+    if _search:
+        _endpoint += f"&query={_search}"
+
+    try:
+        _response = httpx.get(
+            f"{_url}{_endpoint}",
+            headers={"Authorization": f"Bearer {_token}"},
+            timeout=30.0,
+        )
+
+        if _response.status_code == 200:
+            _data = _response.json()
+            _hosts = _data.get("hosts", [])
+
+            if not _hosts:
+                _result = fleet_tip("No hosts found matching your search.")
+            else:
+                # Build table rows
+                _rows = []
+                for _h in _hosts:
+                    _mdm = _h.get("mdm") or {}
+                    _mdm_status = _mdm.get("enrollment_status") or "N/A"
+                    _platform = _h.get("platform") or "N/A"
+                    _rows.append(f"| {_h.get('id', 'N/A')} | {_h.get('display_name') or _h.get('hostname') or 'Unknown'} | {_h.get('hardware_serial') or 'N/A'} | {_platform} | {_mdm_status} |")
+
+                _table = """| ID | Hostname | Serial | Platform | MDM Status |
+|-----|----------|--------|----------|------------|
+""" + "\n".join(_rows)
+
+                _result = mo.vstack([
+                    fleet_success(f"Found {len(_hosts)} host(s)"),
+                    mo.md(_table),
+                ])
         else:
             _result = fleet_error(f"Status {_response.status_code}: {_response.text[:500]}")
 
@@ -888,11 +983,286 @@ def _(mo, github_repo_input):
 
 
 @app.cell
+def _(mo):
+    mo.md("""
+---
+
+## 5. fleetctl CLI Commands
+
+Use the `fleetctl` CLI to interact with your Fleet instance directly from the terminal.
+""")
+
+
+@app.cell
+def _(mo, env_fleetctl_path, fleet_tip):
+    fleetctl_path_input = mo.ui.text(
+        placeholder="/usr/local/bin/fleetctl",
+        label="Path to fleetctl binary",
+        value=env_fleetctl_path if env_fleetctl_path else "fleetctl",
+        full_width=True,
+    )
+
+    mo.vstack([
+        fleet_tip("Install fleetctl: <code>npm install -g fleetctl</code> or download from <a href='https://fleetdm.com/docs/using-fleet/fleetctl-cli'>Fleet releases</a>. Set <code>FLEETCTL_PATH</code> in <code>.env</code> to configure the path."),
+        fleetctl_path_input,
+    ])
+
+    return (fleetctl_path_input,)
+
+
+@app.cell
+def _(mo, fleetctl_path_input, fleet_url_input, api_token_input):
+    _fleetctl = fleetctl_path_input.value.strip() if fleetctl_path_input.value else "fleetctl"
+    _url = fleet_url_input.value.rstrip("/") if fleet_url_input.value else "https://your-fleet-instance.com"
+    _token = api_token_input.value if api_token_input.value else ""
+    _token_masked = f"{_token[:8]}..." if len(_token) > 8 else "<YOUR_API_TOKEN>"
+
+    configure_fleetctl_btn = mo.ui.run_button(label="Configure fleetctl with credentials")
+
+    mo.vstack([
+        mo.md(f"""
+### Login & Configuration
+
+```bash
+# Login to Fleet (interactive - will prompt for credentials)
+{_fleetctl} login --address {_url}
+
+# Or configure with API token (non-interactive)
+{_fleetctl} config set --address {_url} --token {_token_masked}
+
+# Verify connection
+{_fleetctl} get hosts --json | head -20
+```
+"""),
+        mo.hstack([configure_fleetctl_btn], justify="start"),
+    ])
+
+    return (configure_fleetctl_btn,)
+
+
+@app.cell
+def _(mo, subprocess, fleetctl_path_input, fleet_url_input, api_token_input, configure_fleetctl_btn, fleet_success, fleet_error, fleet_warning, fleet_tip):
+    mo.stop(not configure_fleetctl_btn.value, fleet_tip("Click **Configure fleetctl with credentials** to set up fleetctl with your Fleet URL and API token."))
+
+    _fleetctl = fleetctl_path_input.value.strip() if fleetctl_path_input.value else "fleetctl"
+    _url = fleet_url_input.value.rstrip("/") if fleet_url_input.value else ""
+    _token = api_token_input.value if api_token_input.value else ""
+
+    if not _url or not _token:
+        mo.stop(True, fleet_warning("Please configure Fleet URL and API Token in section 1 above."))
+
+    try:
+        # Configure fleetctl with credentials
+        _config_cmd = [_fleetctl, "config", "set", "--address", _url, "--token", _token]
+        _config_proc = subprocess.run(
+            _config_cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if _config_proc.returncode != 0:
+            _error = _config_proc.stderr or _config_proc.stdout or "Unknown error"
+            _result = fleet_error(f"fleetctl config set failed: {_error[:500]}")
+        else:
+            # Verify by getting hosts count
+            _verify_cmd = [_fleetctl, "get", "hosts", "--json"]
+            _verify_proc = subprocess.run(
+                _verify_cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if _verify_proc.returncode == 0:
+                import json as _json
+                try:
+                    _hosts = _json.loads(_verify_proc.stdout) if _verify_proc.stdout else []
+                    _host_count = len(_hosts.get("hosts", [])) if isinstance(_hosts, dict) else len(_hosts)
+                    _result = fleet_success(f"fleetctl configured successfully! Connected to {_url} - Found {_host_count} host(s).")
+                except:
+                    _result = fleet_success(f"fleetctl configured successfully! Connected to {_url}.")
+            else:
+                _result = fleet_success(f"fleetctl configured for {_url}. Verify with 'fleetctl get hosts'.")
+
+    except FileNotFoundError:
+        _result = fleet_error(f"fleetctl not found at `{_fleetctl}`. Set FLEETCTL_PATH in .env or update the path above.")
+    except subprocess.TimeoutExpired:
+        _result = fleet_error("fleetctl command timed out after 30 seconds.")
+    except Exception as e:
+        _result = fleet_error(f"Error: {str(e)}")
+
+    _result
+
+
+@app.cell
+def _(mo):
+    fleetctl_command_select = mo.ui.dropdown(
+        options={
+            "Login (interactive)": "fleetctl login",
+            "Configure with token": "fleetctl config set",
+            "List hosts": "fleetctl get hosts",
+            "List hosts (JSON)": "fleetctl get hosts --json",
+            "List hosts (MDM enrolled)": "fleetctl get hosts --mdm",
+            "List teams": "fleetctl get teams",
+            "List queries": "fleetctl get queries",
+            "List software": "fleetctl get software",
+            "Run live query": "fleetctl query",
+            "Generate GitOps config": "fleetctl generate-gitops",
+            "Apply GitOps config (dry-run)": "fleetctl gitops --dry-run",
+            "Apply GitOps config": "fleetctl gitops",
+            "Show current config": "fleetctl get config",
+        },
+        value="List hosts",
+        label="Select Command",
+    )
+
+    fleetctl_arg_input = mo.ui.text(
+        placeholder="Optional arguments (e.g., hostname, query, file path)",
+        label="Arguments",
+        full_width=True,
+    )
+
+    run_fleetctl_btn = mo.ui.run_button(label="Run Command")
+
+    mo.vstack([
+        mo.md("### Interactive Commands"),
+        mo.hstack([fleetctl_command_select, run_fleetctl_btn], justify="start", gap=1),
+        fleetctl_arg_input,
+    ])
+
+    return fleetctl_command_select, fleetctl_arg_input, run_fleetctl_btn
+
+
+@app.cell
+def _(mo, subprocess, fleet_url_input, api_token_input, fleetctl_path_input, fleetctl_command_select, fleetctl_arg_input, run_fleetctl_btn, fleet_success, fleet_error, fleet_warning, fleet_tip):
+    mo.stop(not run_fleetctl_btn.value, fleet_tip("Select a command and click **Run Command** to execute."))
+
+    _url = fleet_url_input.value.rstrip("/") if fleet_url_input.value else ""
+    _token = api_token_input.value if api_token_input.value else ""
+    _fleetctl = fleetctl_path_input.value.strip() if fleetctl_path_input.value else "fleetctl"
+    _base_cmd = fleetctl_command_select.value
+    _args = fleetctl_arg_input.value.strip() if fleetctl_arg_input.value else ""
+
+    # Build the full command using the configured fleetctl path
+    if _base_cmd == "fleetctl login":
+        if not _url:
+            mo.stop(True, fleet_warning("Please configure Fleet URL above."))
+        _cmd = f"{_fleetctl} login --address {_url}"
+        mo.stop(True, fleet_tip(f"Run this command in your terminal (interactive login required):<br><code>{_cmd}</code>"))
+
+    elif _base_cmd == "fleetctl config set":
+        if not _url or not _token:
+            mo.stop(True, fleet_warning("Please configure Fleet URL and API Token above."))
+        _cmd = [_fleetctl, "config", "set", "--address", _url, "--token", _token]
+
+    elif _base_cmd == "fleetctl query":
+        if not _args:
+            mo.stop(True, fleet_warning("Enter query arguments, e.g.: --query \"SELECT * FROM system_info\" --hosts \"host1\""))
+        import shlex
+        _cmd = [_fleetctl, "query"] + shlex.split(_args)
+
+    elif _base_cmd == "fleetctl generate-gitops":
+        _output_dir = _args if _args else "/tmp/fleet-gitops"
+        _cmd = [_fleetctl, "generate-gitops", "--dir", _output_dir, "--force"]
+
+    elif _base_cmd == "fleetctl gitops --dry-run":
+        if not _args:
+            mo.stop(True, fleet_warning("Enter the path to your GitOps config file in Arguments, e.g.: ./default.yml"))
+        _cmd = [_fleetctl, "gitops", "-f", _args, "--dry-run"]
+
+    elif _base_cmd == "fleetctl gitops":
+        if not _args:
+            mo.stop(True, fleet_warning("Enter the path to your GitOps config file in Arguments, e.g.: ./default.yml"))
+        _cmd = [_fleetctl, "gitops", "-f", _args]
+
+    else:
+        # Simple commands - replace "fleetctl" with the configured path
+        _cmd_parts = _base_cmd.split()
+        _cmd_parts[0] = _fleetctl
+        if _args:
+            import shlex
+            _cmd_parts.extend(shlex.split(_args))
+        _cmd = _cmd_parts
+
+    # Execute command
+    try:
+        _proc = subprocess.run(
+            _cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        _output = _proc.stdout if _proc.stdout else _proc.stderr
+        _cmd_str = " ".join(_cmd) if isinstance(_cmd, list) else _cmd
+
+        if _proc.returncode == 0:
+            _result = mo.vstack([
+                fleet_success(f"Command: `{_cmd_str}`"),
+                mo.md(f"```\n{_output[:10000] if _output else '(no output)'}\n```"),
+            ])
+        else:
+            _result = mo.vstack([
+                fleet_error(f"Command failed: `{_cmd_str}`"),
+                mo.md(f"```\n{_output[:5000] if _output else '(no output)'}\n```"),
+            ])
+
+    except FileNotFoundError:
+        _result = fleet_error(f"fleetctl not found at `{_fleetctl}`. Set FLEETCTL_PATH in .env or update the path above.")
+    except subprocess.TimeoutExpired:
+        _result = fleet_error("Command timed out after 60 seconds.")
+    except Exception as e:
+        _result = fleet_error(f"Error: {str(e)}")
+
+    _result
+
+
+@app.cell
+def _(mo, fleetctl_path_input):
+    _fleetctl = fleetctl_path_input.value.strip() if fleetctl_path_input.value else "fleetctl"
+
+    mo.md(f"""
+### GitOps Workflow Commands
+
+```bash
+# Generate GitOps configuration from your Fleet instance
+{_fleetctl} generate-gitops --dir /tmp/fleet-gitops --force
+
+# Generate for a specific team (Premium only)
+{_fleetctl} generate-gitops --team "Workstations" --dir /tmp/fleet-gitops
+
+# Generate global settings only
+{_fleetctl} generate-gitops --team global --dir /tmp/fleet-gitops
+
+# Preview changes (always do this first!)
+{_fleetctl} gitops -f ./default.yml --dry-run
+
+# Apply configuration changes
+{_fleetctl} gitops -f ./default.yml
+```
+
+### Common Directory Structure
+
+```
+fleet-gitops/
+├── default.yml           # Global settings
+├── teams/
+│   ├── workstations.yml  # Team-specific config
+│   └── engineering.yml
+└── lib/                   # Shared policies, queries
+```
+""")
+
+
+@app.cell
 def _(mo, fleet_tip):
     mo.vstack([
         fleet_tip("Your Fleet GitOps setup is ready! Push changes to your repository to trigger automated deployments."),
         mo.md("""
-### Resources
+---
+
+## Resources
 
 - [Fleet Documentation](https://fleetdm.com/docs)
 - [Fleet GitOps Guide](https://fleetdm.com/docs/using-fleet/gitops)
