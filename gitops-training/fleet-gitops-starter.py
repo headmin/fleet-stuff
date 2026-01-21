@@ -746,14 +746,17 @@ def _(mo, fleet_url_input, api_token_input, github_repo_input, uuid, fleet_tip):
     _uuid4 = str(uuid.uuid4())
     _uuid5 = str(uuid.uuid4())
 
+    # Mask the token for display
+    _token_masked = f"{_token[:8]}..." if len(_token) > 8 else "<YOUR_API_TOKEN>"
+
     _commands = f"""# First, authenticate with GitHub CLI (if not already done)
 gh auth login
 
 # Set Fleet URL
 gh secret set FLEET_URL --repo {_repo} --body "{_url}"
 
-# Set Fleet API Token
-gh secret set FLEET_API_TOKEN --repo {_repo} --body "{_token}"
+# Set Fleet API Token (replace with your actual token)
+gh secret set FLEET_API_TOKEN --repo {_repo} --body "{_token_masked}"
 
 # Set Enroll Secrets (using generated UUIDs)
 gh secret set FLEET_GLOBAL_ENROLL_SECRET --repo {_repo} --body "{_uuid1}"
