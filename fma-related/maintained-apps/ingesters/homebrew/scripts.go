@@ -329,12 +329,14 @@ type scriptBuilder struct {
 }
 
 func newScriptBuilder() *scriptBuilder {
-	return &scriptBuilder{
+	sb := &scriptBuilder{
 		statements:   []string{},
 		variables:    map[string]string{},
 		functions:    map[string]string{},
 		pathsCreated: map[string]struct{}{},
 	}
+	sb.AddFunction("echo", echoFunc)
+	return sb
 }
 
 // AddVariable adds a variable definition to the script
@@ -772,4 +774,12 @@ const forgetPkgFunc = `forget_pkg() {
 forget_receipt() {
   local PKGID="$1"
   sudo pkgutil --forget "$PKGID"
+}`
+
+// echoFunc overrides the built-in echo to also log to macOS unified logging system.
+// This allows existing echo statements to automatically log to unified log.
+// Note: logger -t tag is not preserved in unified log, so we prefix the message instead.
+const echoFunc = `echo() {
+  logger -p user.info "fleetdm.installer: $*"
+  builtin echo "$@"
 }`
