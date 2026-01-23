@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // ANSI color codes
@@ -82,6 +83,29 @@ func main() {
 			}
 		} else {
 			fmt.Printf("%sSkipping intermediate CA (no cert provided).%s\n", Dim, Reset)
+		}
+	}
+
+	// 5. Get RADIUS CA certificate (optional, only if root was provided)
+	radiusCertPEM := ""
+	if rootCertPEM != "" {
+		fmt.Println()
+		fmt.Printf("%sOptional: If your WiFi RADIUS server uses a different CA%s\n", Dim, Reset)
+		fmt.Printf("%s(Common for enterprise WiFi with separate RADIUS infrastructure)%s\n", Dim, Reset)
+		radiusCertPath := prompt(reader, fmt.Sprintf("%sRADIUS CA certificate file path (press Enter to skip):%s ", Yellow, Reset))
+		if radiusCertPath != "" {
+			radiusCertPath = expandPath(radiusCertPath)
+			content, err := os.ReadFile(radiusCertPath)
+			if err != nil {
+				fmt.Printf("%sError reading file: %v%s\n", Yellow, err, Reset)
+			} else if !strings.Contains(string(content), "BEGIN CERTIFICATE") {
+				fmt.Printf("%sFile does not appear to be a PEM certificate.%s\n", Yellow, Reset)
+			} else {
+				radiusCertPEM = string(content)
+				fmt.Printf("%sRADIUS CA certificate loaded.%s\n", Green, Reset)
+			}
+		} else {
+			fmt.Printf("%sSkipping RADIUS CA (no cert provided).%s\n", Dim, Reset)
 		}
 	}
 
