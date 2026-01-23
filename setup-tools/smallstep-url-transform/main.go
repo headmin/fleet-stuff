@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 )
 
 // ANSI color codes
@@ -227,8 +226,12 @@ func main() {
 				if intermediateCertPEM != "" {
 					intermediateCertUUID = generateUUID("com.apple.security.pkcs1.intermediate." + trustPayloadID)
 				}
+				radiusCertUUID := ""
+				if radiusCertPEM != "" {
+					radiusCertUUID = generateUUID("com.apple.security.root.radius." + trustPayloadID)
+				}
 
-				if err := writeTrustMobileconfig(trustFile, trustPayloadID, caNameUpper, rootCertPEM, intermediateCertPEM, trustProfileUUID, rootCertUUID, intermediateCertUUID); err != nil {
+				if err := writeTrustMobileconfig(trustFile, trustPayloadID, caNameUpper, rootCertPEM, intermediateCertPEM, radiusCertPEM, trustProfileUUID, rootCertUUID, intermediateCertUUID, radiusCertUUID); err != nil {
 					fmt.Printf("\n%sError writing trust mobileconfig: %v%s\n", Yellow, err, Reset)
 				} else {
 					fmt.Println()
@@ -243,6 +246,9 @@ func main() {
 					fmt.Printf("  %sRoot CA PayloadUUID:%s       %s\n", Dim, Reset, rootCertUUID)
 					if intermediateCertUUID != "" {
 						fmt.Printf("  %sIntermediate CA PayloadUUID:%s %s\n", Dim, Reset, intermediateCertUUID)
+					}
+					if radiusCertUUID != "" {
+						fmt.Printf("  %sRADIUS CA PayloadUUID:%s     %s\n", Dim, Reset, radiusCertUUID)
 					}
 				}
 			}
@@ -409,7 +415,7 @@ func writeSCEPMobileconfig(filename, payloadID, caName, challengeVar, proxyVar, 
 	return os.WriteFile(filename, []byte(content), 0644)
 }
 
-func writeTrustMobileconfig(filename, payloadID, caName, rootCertPEM, intermediateCertPEM, profileUUID, rootCertUUID, intermediateCertUUID string) error {
+func writeTrustMobileconfig(filename, payloadID, caName, rootCertPEM, intermediateCertPEM, radiusCertPEM, profileUUID, rootCertUUID, intermediateCertUUID, radiusCertUUID string) error {
 	rootCertBase64 := pemToBase64(rootCertPEM)
 
 	// Build payload content
@@ -450,6 +456,28 @@ func writeTrustMobileconfig(filename, payloadID, caName, rootCertPEM, intermedia
             <key>PayloadVersion</key>
             <integer>1</integer>
         </dict>`, intermediateCertBase64, intermediateCertUUID, intermediateCertUUID)
+	}
+
+	// Add RADIUS cert if provided
+	if radiusCertPEM != "" {
+		radiusCertBase64 := pemToBase64(radiusCertPEM)
+		payloadContent += fmt.Sprintf(`
+        <dict>
+            <key>PayloadCertificateFileName</key>
+            <string>radius-ca.cer</string>
+            <key>PayloadContent</key>
+            <data>%s</data>
+            <key>PayloadDisplayName</key>
+            <string>RADIUS CA Certificate</string>
+            <key>PayloadIdentifier</key>
+            <string>com.apple.security.root.%s</string>
+            <key>PayloadType</key>
+            <string>com.apple.security.root</string>
+            <key>PayloadUUID</key>
+            <string>%s</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>`, radiusCertBase64, radiusCertUUID, radiusCertUUID)
 	}
 
 	content := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
