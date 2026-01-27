@@ -1,0 +1,55 @@
+{
+  "root": "/home/step/certs/root_ca.crt",
+  "federatedRoots": null,
+  "crt": "/home/step/certs/intermediate_ca.crt",
+  "key": "/home/step/secrets/intermediate_ca_key",
+  "address": ":9000",
+  "insecureAddress": "",
+  "dnsNames": ["localhost", "127.0.0.1", "host.docker.internal"],
+  "logger": {
+    "format": "text"
+  },
+  "db": {
+    "type": "badgerv2",
+    "dataSource": "/home/step/db",
+    "badgerFileLoadingMode": ""
+  },
+  "authority": {
+    "provisioners": [
+      {
+        "type": "JWK",
+        "name": "admin",
+        "key": {
+          "use": "sig",
+          "kty": "EC",
+          "kid": "0qDJjmSUD1pPLYnXNovag02Yt0ywARdRcfvnz_YJILQ",
+          "crv": "P-256",
+          "alg": "ES256",
+          "x": "Wz6P86SVcVxbCxJIGtah6nc7dBOLxKlSlzeWTDec_5E",
+          "y": "K7F17gKx_hYrNRSHQBfwtUO0SVH4q3Zt9bhTKocGC4E"
+        },
+        "encryptedKey": "eyJhbGciOiJQQkVTMi1IUzI1NitBMTI4S1ciLCJjdHkiOiJqd2sranNvbiIsImVuYyI6IkEyNTZHQ00iLCJwMmMiOjYwMDAwMCwicDJzIjoiZUpreTNwbkdMcXlvajZWZVh6SHplUSJ9.kAozT4Ru-TwmskRsCLHaOwgB1uls1lTYfz9pJL_a4xxItPKjURkrdg.DgXni20ACAjgx6AR.CcSNnBrClLgrZmSzbxM6jznvIJRoENNTajnzDXCryDecD2IPbZa69vG7xaddWgBqeBtxRY_hH5EuFZPFDo0op28129tAEzntqwm1D5MXpk0ippoISXoBIqqIxoWTXT5Yu8ZpqIA_T3Frj4_lsabu2dPTy98mfPFzL92GnhmyyfjOUoe6_OyHAQyeL_I4VFbb36lnFJlK3nvVDs67o-pXoXcds2oXMtUzYEZlm-KYBY8FSlAO9YH8a1bRFWpiw3j1wlYnhVTh0NnJLP4pEEjL-Np0vMgBkKeBFwxo9ftcLL6uAn-AqK7EXLrwxBPs0XimsWZUYD2IN_1S8gTaywE.Jtk4dRhbXXyAyAPHltHhPw"
+      },
+      {
+        "type": "ACME",
+        "name": "acme",
+        "challenges": ["http-01", "dns-01", "tls-alpn-01"]
+      },
+      {
+        "type": "ACME",
+        "name": "acme-mda",
+        "challenges": ["device-attest-01"],
+        "attestationFormats": ["apple"]
+      }
+    ]
+  },
+  "tls": {
+    "cipherSuites": [
+      "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"
+    ],
+    "minVersion": 1.2,
+    "maxVersion": 1.3,
+    "renegotiation": false
+  }
+}

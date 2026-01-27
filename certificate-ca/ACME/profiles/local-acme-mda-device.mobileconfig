@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.security.acme</string>
+            <key>PayloadIdentifier</key>
+            <string>com.local.acme-ca.mda</string>
+            <key>PayloadUUID</key>
+            <string>LOCAL-ACME-MDA-0001-000000000001</string>
+            <key>PayloadDisplayName</key>
+            <string>Local ACME CA Certificate (MDA)</string>
+            <key>PayloadDescription</key>
+            <string
+                >ACME certificate with Apple device attestation from local CA</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>DirectoryURL</key>
+            <string>https://localhost:9443/acme/acme-mda/directory</string>
+            <key>ClientIdentifier</key>
+            <string>$FLEET_VAR_HOST_HARDWARE_SERIAL</string>
+            <key>KeyType</key>
+            <string>ECSECPrimeRandom</string>
+            <key>KeySize</key>
+            <integer>256</integer>
+            <key>HardwareBound</key>
+            <true />
+            <key>Attest</key>
+            <true />
+            <key>Subject</key>
+            <array>
+                <array>
+                    <array>
+                        <string>CN</string>
+                        <string>$FLEET_VAR_HOST_HARDWARE_SERIAL</string>
+                    </array>
+                </array>
+                <array>
+                    <array>
+                        <string>O</string>
+                        <string>Local Test</string>
+                    </array>
+                </array>
+            </array>
+            <key>UsageFlags</key>
+            <integer>5</integer>
+            <key>ExtendedKeyUsage</key>
+            <array>
+                <string>1.3.6.1.5.5.7.3.2</string>
+            </array>
+            <key>AllowAllAppsAccess</key>
+            <true />
+        </dict>
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>Local ACME CA Certificate (MDA)</string>
+    <key>PayloadDescription</key>
+    <string
+        >ACME certificate with Apple device attestation from local step-ca</string>
+    <key>PayloadIdentifier</key>
+    <string>com.local.acme-ca.mda.profile</string>
+    <key>PayloadOrganization</key>
+    <string>Local Test</string>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>LOCAL-ACME-CNFG-0001-000000000001</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadRemovalDisallowed</key>
+    <false />
+</dict>
+</plist>

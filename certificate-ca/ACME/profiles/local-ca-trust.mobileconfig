@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadCertificateFileName</key>
+            <string>local-acme-root-ca.cer</string>
+            <key>PayloadContent</key>
+            <data>LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJ4ekNDQVcyZ0F3SUJBZ0lRR3lycGFVdE5LOXFmOHRHRjFMYUR0REFLQmdncWhrak9QUVFEQWpCQ01Sc3cKR1FZRFZRUUtFeEpHYkdWbGRDQlVaWE4wSUVGRFRVVWdRMEV4SXpBaEJnTlZCQU1UR2tac1pXVjBJRlJsYzNRZwpRVU5OUlNCRFFTQlNiMjkwSUVOQk1CNFhEVEkyTURFeU5ERTFNRGt5T0ZvWERUTTJNREV5TWpFMU1Ea3lPRm93ClFqRWJNQmtHQTFVRUNoTVNSbXhsWlhRZ1ZHVnpkQ0JCUTAxRklFTkJNU013SVFZRFZRUURFeHBHYkdWbGRDQlUKWlhOMElFRkRUVVVnUTBFZ1VtOXZkQ0JEUVRCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQk8xawpFakhIZFBLZFZZTlluMFlWSlFDaDNsSk54aFk1YmkrSjBqcjhwemZoaTJXOXl4NWxWZ1ZSRVNyYTRVK1hncUJhCmIzL1Byd0dGQUoxd1k4K3dlYmVqUlRCRE1BNEdBMVVkRHdFQi93UUVBd0lCQmpBU0JnTlZIUk1CQWY4RUNEQUcKQVFIL0FnRUJNQjBHQTFVZERnUVdCQlJMYXBLOFlsbE9SV2c4MUZhbkVOWG9TVXhGWFRBS0JnZ3Foa2pPUFFRRApBZ05JQURCRkFpRUF0eDlaQVBkYlN2TSthMlpub2JqeXlDcVNPdGZuT0dwODU4dXJNOUVSUXI0Q0lISmt1a0Z3Cm5sQktVVVRBL0V3RGhwSmhPb2V5SWtmNXlja0V2cVVVb3ZIVQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==</data>
+            <key>PayloadDisplayName</key>
+            <string>Local ACME CA Root</string>
+            <key>PayloadIdentifier</key>
+            <string>com.local.acme-ca.root</string>
+            <key>PayloadType</key>
+            <string>com.apple.security.root</string>
+            <key>PayloadUUID</key>
+            <string>B38386F1-1E7E-4E39-A2C6-1D5788A4C91D</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>
+        <dict>
+            <key>PayloadCertificateFileName</key>
+            <string>local-acme-intermediate-ca.cer</string>
+            <key>PayloadContent</key>
+            <data>LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUI4VENDQVphZ0F3SUJBZ0lRZGRINXY4VHQrbUhYb3AvYmtRTisrakFLQmdncWhrak9QUVFEQWpCQ01Sc3cKR1FZRFZRUUtFeEpHYkdWbGRDQlVaWE4wSUVGRFRVVWdRMEV4SXpBaEJnTlZCQU1UR2tac1pXVjBJRlJsYzNRZwpRVU5OUlNCRFFTQlNiMjkwSUVOQk1CNFhEVEkyTURFeU5ERTFNRGt5T1ZvWERUTTJNREV5TWpFMU1Ea3lPVm93ClNqRWJNQmtHQTFVRUNoTVNSbXhsWlhRZ1ZHVnpkQ0JCUTAxRklFTkJNU3N3S1FZRFZRUURFeUpHYkdWbGRDQlUKWlhOMElFRkRUVVVnUTBFZ1NXNTBaWEp0WldScFlYUmxJRU5CTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowRApBUWNEUWdBRTI0eTNrcHhhcnZnKzlxSDM4b1l2Y0taTi9OeldjOEdHc01CS0RBWUk0eFNnTC9pOHdQZ0ZtR3ZkCm1SOHc0YlRTTXV3TU41RTc4QTNEN1RUQU8zaWNacU5tTUdRd0RnWURWUjBQQVFIL0JBUURBZ0VHTUJJR0ExVWQKRXdFQi93UUlNQVlCQWY4Q0FRQXdIUVlEVlIwT0JCWUVGSFNnUC9EMmdOdHFFU25vZTdtTVROWEFtejkwTUI4RwpBMVVkSXdRWU1CYUFGRXRxa3J4aVdVNUZhRHpVVnFjUTFlaEpURVZkTUFvR0NDcUdTTTQ5QkFNQ0Ewa0FNRVlDCklRRCtTQ0lWTXhUMWwxbnlJdWxSQkRJS3NhSjZkVkFveGp3WkxjcnVlaWlOTkFJaEFKZEFaaHk5SE1ldHlncVIKZHJJRmxjTnhQOHl4a2syRHVIdjJ3MmY4VmtlWQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==</data>
+            <key>PayloadDisplayName</key>
+            <string>Local ACME CA Intermediate</string>
+            <key>PayloadIdentifier</key>
+            <string>com.local.acme-ca.intermediate</string>
+            <key>PayloadType</key>
+            <string>com.apple.security.pkcs1</string>
+            <key>PayloadUUID</key>
+            <string>A24E38AC-35A0-4278-96D4-AC5429F1DC6D</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>Local ACME CA Trust</string>
+    <key>PayloadDescription</key>
+    <string>Trust certificates for local step-ca ACME instance</string>
+    <key>PayloadIdentifier</key>
+    <string>com.local.acme-ca.trust.profile</string>
+    <key>PayloadOrganization</key>
+    <string>Local Test</string>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>768E74A5-45AA-415F-846D-7C44D94D826C</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+</dict>
+</plist>
