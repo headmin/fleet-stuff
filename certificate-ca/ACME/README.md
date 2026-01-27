@@ -1,6 +1,6 @@
 # Local ACME CA Container
 
-A local step-ca instance configured for ACME with Apple device attestation (MDA) support.
+A local step-ca instance configured for ACME using [smallstep/step-ca](https://github.com/smallstep/certificates) configured with Apple device attestation (MDA) support.
 
 ## Features
 
