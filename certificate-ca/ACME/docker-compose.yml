@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  step-ca:
+    image: smallstep/step-ca:latest
+    container_name: ${CONTAINER_NAME:-local-acme-ca}
+    restart: unless-stopped
+    ports:
+      - "${ACME_PORT:-9443}:9000"
+    volumes:
+      - ./data:/home/step
+    healthcheck:
+      test: ["CMD", "step", "ca", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - acme-network
+
+networks:
+  acme-network:
+    driver: bridge

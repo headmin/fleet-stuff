@@ -1,0 +1,13 @@
+# Environment files
+.env
+
+# CA secrets (private keys, passwords)
+data/secrets/*
+!data/secrets/.gitkeep
+
+# CA database (generated at runtime)
+data/db/*
+!data/db/.gitkeep
+
+# macOS
+**.DS_Store

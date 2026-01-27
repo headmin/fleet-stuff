@@ -1,0 +1,6 @@
+{
+	"ca-url": "https://localhost:9000",
+	"ca-config": "/Users/henry/Code/GitHub/fleet-stuff/setup-tools/ACME/local-ca/data/config/ca.json",
+	"fingerprint": "30669581e9c3dbe387a99837666f243aca198ac062eec2228c13bb47cf0ada5a",
+	"root": "/Users/henry/Code/GitHub/fleet-stuff/setup-tools/ACME/local-ca/data/certs/root_ca.crt"
+}
