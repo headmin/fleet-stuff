@@ -435,6 +435,8 @@ step ca certificate test.local test.crt test.key \
 
 ## References
 
-- [Smallstep ACME Device Attestation](https://smallstep.com/docs/step-ca/provisioners/#acme-device-attestation)
-- [Apple ACME Payload](https://developer.apple.com/documentation/devicemanagement/acme)
-- [Apple Device Attestation](https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity)
+- [Smallstep ACME Device Attestation](https://smallstep.com/docs/step-ca/provisioners/#acme)
+- [Smallstep Private ACME Server](https://smallstep.com/blog/private-acme-server/)
+- [Apple ACME Payload](https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.security.acme.yaml)
+- [Apple Developer Documentation - ACME Certificate](https://developer.apple.com/documentation/devicemanagement/acmecertificate)
+- [Apple Managed Device Attestation](https://support.apple.com/en-sg/guide/deployment/dep28afbde6a/web)
