@@ -1,0 +1,28 @@
+<!-- Atomic Windows CSP profile for Fleet -->
+<!-- All settings applied together — all-or-nothing -->
+<!-- If <Atomic> is first, it MUST be the ONLY top-level element -->
+<!-- Do NOT include <?xml?> declaration or <SyncML> envelope -->
+<Atomic>
+  <Replace>
+    <Item>
+      <Meta>
+        <Format xmlns="syncml:metinf">int</Format>
+      </Meta>
+      <Target>
+        <LocURI>./Device/Vendor/MSFT/CHANGEME/Setting1</LocURI>
+      </Target>
+      <Data>1</Data>
+    </Item>
+  </Replace>
+  <Replace>
+    <Item>
+      <Meta>
+        <Format xmlns="syncml:metinf">int</Format>
+      </Meta>
+      <Target>
+        <LocURI>./Device/Vendor/MSFT/CHANGEME/Setting2</LocURI>
+      </Target>
+      <Data>1</Data>
+    </Item>
+  </Replace>
+</Atomic>
