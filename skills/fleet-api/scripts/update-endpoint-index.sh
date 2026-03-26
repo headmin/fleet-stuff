@@ -34,7 +34,7 @@ fi
 python3 -c "
 import re, sys
 
-with open('$SOURCE') as f:
+with open(sys.argv[1]) as f:
     lines = f.read().split('\n')
 
 current_section = ''
@@ -82,11 +82,11 @@ for section, endpoints in results.items():
 output.append(f'---')
 output.append(f'Total: {total} endpoints')
 
-with open('$OUTPUT', 'w') as f:
+with open(sys.argv[2], 'w') as f:
     f.write('\n'.join(output))
 
-print(f'Generated {total} endpoints in {len(output)} lines -> $OUTPUT')
-"
+print(f'Generated {total} endpoints in {len(output)} lines -> {sys.argv[2]}')
+" "$SOURCE" "$OUTPUT"
 
 rm -f "$TMPFILE"
 echo "Done."

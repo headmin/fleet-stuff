@@ -4,15 +4,15 @@
 # Validates the endpoint index against a live Fleet instance.
 # Checks that endpoints return non-404 responses.
 #
-# Usage: ./validate-endpoints.sh <fleet-url> <api-token>
-# Example: ./validate-endpoints.sh https://fleet.example.com abc123token
+# Usage: FLEET_API_TOKEN=<token> ./validate-endpoints.sh <fleet-url>
+# Example: FLEET_API_TOKEN=abc123 ./validate-endpoints.sh https://fleet.example.com
 #
 # Output: Lists endpoints that return 404 (likely removed/changed).
 
 set -euo pipefail
 
-FLEET_URL="${1:?Usage: validate-endpoints.sh <fleet-url> <api-token>}"
-API_TOKEN="${2:?Usage: validate-endpoints.sh <fleet-url> <api-token>}"
+FLEET_URL="${1:?Usage: FLEET_API_TOKEN=<token> ./validate-endpoints.sh <fleet-url>}"
+API_TOKEN="${FLEET_API_TOKEN:?Set FLEET_API_TOKEN environment variable}"
 
 # Remove trailing slash
 FLEET_URL="${FLEET_URL%/}"
@@ -34,8 +34,8 @@ OK=0
 NOT_FOUND=0
 ERRORS=0
 
-# Extract GET endpoints (safe to probe)
-grep -E '^\| .+ \| `GET` \| `(/api/v1/[^`]+)` \|$' "$INDEX" | while IFS='|' read -r _ name _ path _; do
+# Extract GET endpoints (safe to probe) — use process substitution to avoid subshell
+while IFS='|' read -r _ name _ path _; do
   path=$(echo "$path" | sed 's/`//g' | xargs)
 
   # Skip endpoints with path params (:id, :token, etc.)
@@ -57,10 +57,11 @@ grep -E '^\| .+ \| `GET` \| `(/api/v1/[^`]+)` \|$' "$INDEX" | while IFS='|' read
   else
     OK=$((OK + 1))
   fi
-done
+done < <(grep -E '^\| .+ \| `GET` \| `(/api/v1/[^`]+)` \|$' "$INDEX")
 
 echo "---"
-echo "Checked GET endpoints without path params."
+echo "Results: $TOTAL checked, $OK ok, $NOT_FOUND missing, $ERRORS errors"
+echo ""
 echo "Endpoints with :id/:token params were skipped (need specific IDs)."
 echo ""
 echo "To fully validate, also check the Fleet changelog for removed endpoints:"

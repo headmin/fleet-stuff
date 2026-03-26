@@ -53,11 +53,14 @@ Load these references only when the specific step requires them:
 | Valid PayloadType values, typos, deprecated types | `references/common-payload-types.md` |
 | macOS 13+ System Settings extension IDs | `references/common-payload-types.md` (System Settings section) |
 | SSO ExtensionIdentifier values | `references/common-payload-types.md` (SSO section) |
-| Per-payload schema (e.g., systempreferences) | `references/apple-schema-<payloadtype>.yaml` |
+| FileVault (disk encryption) schema | `references/apple-schema-com.apple.MCX.FileVault2.yaml` |
+| Firewall schema | `references/apple-schema-com.apple.security.firewall.yaml` |
+| PPPC/TCC (privacy preferences) schema | `references/apple-schema-com.apple.TCC.configuration-profile-policy.yaml` |
+| Per-payload schema (other types) | `references/apple-schema-<payloadtype>.yaml` |
 | Starting template for a new profile | `references/template.mobileconfig` |
 | Full validation checklist before delivery | `references/validation-checklist.md` |
 
-To add new payload schemas: download from `https://github.com/apple/device-management/blob/release/mdm/profiles/<payloadtype>.yaml` and save to `references/`.
+To add new payload schemas: download from `https://raw.githubusercontent.com/apple/device-management/release/mdm/profiles/<payloadtype>.yaml` and save to `references/`. Large schemas (wifi, SSO, restrictions) exceed the 300-line guideline — fetch on-demand rather than storing locally.
 
 ## Step 4: Create or Review
 

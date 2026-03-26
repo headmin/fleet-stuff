@@ -149,7 +149,7 @@ labels:
 
 ```yaml
 name: Workstations
-team_settings:
+settings:
   features:
     enable_host_users: true
     enable_software_inventory: true
