@@ -1,0 +1,25 @@
+<!-- Multi-setting Windows CSP profile for Fleet (non-atomic) -->
+<!-- Each setting is applied independently — individual settings can fail without rolling back others -->
+<!-- Do NOT include <?xml?> declaration or <SyncML> envelope -->
+<Replace>
+  <Item>
+    <Meta>
+      <Format xmlns="syncml:metinf">bool</Format>
+    </Meta>
+    <Target>
+      <LocURI>./Device/Vendor/MSFT/CHANGEME/Setting1</LocURI>
+    </Target>
+    <Data>true</Data>
+  </Item>
+</Replace>
+<Replace>
+  <Item>
+    <Meta>
+      <Format xmlns="syncml:metinf">int</Format>
+    </Meta>
+    <Target>
+      <LocURI>./Device/Vendor/MSFT/CHANGEME/Setting2</LocURI>
+    </Target>
+    <Data>1</Data>
+  </Item>
+</Replace>

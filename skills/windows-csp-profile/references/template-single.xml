@@ -1,0 +1,14 @@
+<!-- Single-setting Windows CSP profile for Fleet -->
+<!-- Replace the LocURI, Format type, and Data value -->
+<!-- Do NOT include <?xml?> declaration or <SyncML> envelope -->
+<Replace>
+  <Item>
+    <Meta>
+      <Format xmlns="syncml:metinf">int</Format>
+    </Meta>
+    <Target>
+      <LocURI>./Device/Vendor/MSFT/Policy/Config/CHANGEME/CHANGEME</LocURI>
+    </Target>
+    <Data>CHANGEME</Data>
+  </Item>
+</Replace>
