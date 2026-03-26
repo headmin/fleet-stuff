@@ -47,6 +47,26 @@ if grep -A1 '<key>PayloadUUID</key>' "$FILE" | grep -E '<string>[^<]*[G-Zg-z][^<
   ERRORS=$((ERRORS + 1))
 fi
 
+# 6. Check for deprecated PayloadTypes (macOS 13+ baseline)
+DEPRECATED_TYPES="com.apple.systempreferences"
+for dtype in $DEPRECATED_TYPES; do
+  if grep -A1 '<key>PayloadType</key>' "$FILE" | grep -q "<string>${dtype}</string>" 2>/dev/null; then
+    echo "FAIL: Deprecated PayloadType '${dtype}' — banned on macOS 13+. See references/common-payload-types.md for modern replacements."
+    ERRORS=$((ERRORS + 1))
+  fi
+done
+
+# 7. Check for duplicate UUIDs
+UUIDS=$(grep -A1 '<key>PayloadUUID</key>' "$FILE" | grep '<string>' | sed 's/.*<string>\(.*\)<\/string>.*/\1/' | sort)
+UNIQUE_UUIDS=$(echo "$UUIDS" | sort -u)
+if [ "$(echo "$UUIDS" | wc -l)" -ne "$(echo "$UNIQUE_UUIDS" | wc -l)" ]; then
+  echo "FAIL: Duplicate PayloadUUID found"
+  echo "$UUIDS" | uniq -d | while read -r dup; do
+    echo "  Duplicate: $dup"
+  done
+  ERRORS=$((ERRORS + 1))
+fi
+
 echo "---"
 if [ "$ERRORS" -eq 0 ]; then
   echo "PASS: No issues found"

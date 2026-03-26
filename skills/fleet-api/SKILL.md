@@ -47,17 +47,7 @@ Default 1MiB (`FLEET_SERVER_DEFAULT_MAX_REQUEST_BODY_SIZE`), unless endpoint spe
 
 ## Step 3: Look Up Endpoints As Needed
 
-Load the specific reference file for the API domain the user needs:
-
-| When working with... | Read this file |
-|---|---|
-| Full endpoint index (all 210 endpoints) | `references/endpoint-index.md` |
-| Hosts (list, get, delete, lock, wipe, MDM, labels) | `references/api-hosts.md` |
-| Software (packages, App Store, Fleet-maintained, install) | `references/api-software.md` |
-| Policies & Reports (CRUD, automations) | `references/api-policies-reports.md` |
-| OS Settings (profiles, disk encryption, status) | `references/api-os-settings.md` |
-| Fleets, Labels, Users | `references/api-fleets-labels-users.md` |
-| Config, Auth, Integrations, Scripts, Commands | `references/api-config-misc.md` |
+Read `references/endpoint-index.md` — it contains all endpoints grouped by domain (Hosts, Software, Policies, OS Settings, Fleets, Labels, Users, Config, Scripts, Commands, etc.). Find the relevant section for the user's request.
 
 ### External reference
 - Full API docs (canonical): https://fleetdm.com/docs/rest-api/rest-api
@@ -81,6 +71,14 @@ fleetctl api get /api/v1/fleet/hosts --query per_page=10
 2. **By ID vs identifier**: Hosts can be fetched by ID (`/hosts/:id`) or identifier (`/hosts/identifier/:identifier` where identifier is hostname, UUID, or serial)
 3. **Batch operations**: Use `POST /api/v1/fleet/hosts/delete` (body with IDs) instead of deleting one-by-one
 4. **Async operations**: Lock, wipe, MDM commands are queued — check status via activities endpoint
+
+### Dangerous endpoints (confirm before using)
+These endpoints are destructive and irreversible. Always confirm intent with the user before scripting them:
+- `POST /api/v1/fleet/hosts/delete` — Batch-deletes hosts (removes ALL data for those hosts)
+- `DELETE /api/v1/fleet/hosts/:id` — Deletes a single host
+- `POST /api/v1/fleet/hosts/:id/wipe` — Factory-wipes a device
+- `POST /api/v1/fleet/hosts/:id/lock` — Locks a device (PIN required to unlock)
+- `DELETE /api/v1/fleet/fleets/:id` — Deletes a fleet and moves hosts to Unassigned
 
 ## Step 5: Validate & Test
 

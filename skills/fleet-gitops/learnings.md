@@ -148,13 +148,13 @@ Observations from real-world Fleet GitOps authoring. Update this file as new pat
 
 ### Observation #3: Separate Files Are Easier to Review
 
-**What worked**: Splitting policies, reports, and labels into separate `lib/*.yml` files made PRs more reviewable and reduced merge conflicts.
+**What worked**: Splitting policies, reports, and labels into separate `platforms/*.yml` files made PRs more reviewable and reduced merge conflicts.
 **When to apply**: For repos with >5 policies or >3 fleets, recommend separate files.
 
-### Observation #4: CA Variable Gotcha
+### Observation #4: CA Variables Pass Dry-Run But Fail on Apply
 
 **What worked around**: If `$FLEET_VAR_DIGICERT_DATA_<CA_NAME>` or other CA variables don't exist, dry runs succeed but actual runs fail.
-**When to apply**: Warn users that CA-dependent profiles will fail silently in dry run if the CA isn't configured.
+**When to apply**: Warn users that CA-dependent profiles will fail silently in dry run if the CA isn't configured. See also Rule #16 (dry run skips secret validation).
 
 ### Observation #5: labels Key Deletion Behavior
 

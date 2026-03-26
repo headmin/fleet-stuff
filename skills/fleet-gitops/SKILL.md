@@ -88,7 +88,7 @@ Load these references only when the specific step requires them:
 3. Read `references/yaml-schema.md` for exact key names and types
 4. Check `references/scope-rules.md` to ensure settings are at the right level
 5. For .mobileconfig profiles, delegate to the `mobileconfig-profile` skill
-6. Validate: all required keys present, paths correct, labels consistent, no deprecated patterns
+6. Validate: run `scripts/validate-gitops-yaml.sh <file>` to check required keys, scope rules, and deprecated patterns
 
 ### Reviewing Existing GitOps YAML
 1. Check all required top-level keys present
