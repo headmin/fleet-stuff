@@ -1,5 +1,6 @@
 ---
-description: "Expert at authoring and reviewing Fleet GitOps YAML files for managing device fleets as code."
+name: fleet-gitops
+description: "Expert at authoring and reviewing Fleet GitOps YAML files for managing device fleets as code. Use when working with Fleet YAML configuration, fleetctl apply, or MDM profiles in GitOps."
 ---
 
 # Fleet GitOps Configuration Skill
@@ -20,6 +21,32 @@ Expert at authoring and reviewing Fleet GitOps YAML files for managing device fl
 Before starting, read these for accumulated knowledge:
 - Read `learnings.md` — hard rules and observations from prior sessions
 - Read `references/scope-rules.md` — what can be configured where
+
+### Optional: Check for fleetctl and contour
+
+If available, use these tools for validation:
+
+```bash
+# Check if tools are available
+command -v fleetctl >/dev/null 2>&1 && echo "fleetctl available"
+command -v contour >/dev/null 2>&1 && echo "contour available"
+
+# fleetctl - GitOps validation and apply
+fleetctl apply -f default.yml --dry-run        # Validate without applying
+fleetctl apply -f fleets/engineering.yml       # Apply fleet configuration
+fleetctl apply -f unassigned.yml               # Apply unassigned fleet config
+
+# contour - Profile validation (for MDM profiles referenced in YAML)
+contour profile validate platforms/macos/configuration-profiles/*.mobileconfig
+contour ddm validate platforms/macos/declaration-profiles/*.json
+```
+
+**When to use which:**
+- Use `fleetctl apply --dry-run` to validate YAML structure and schema
+- Use `contour` to validate .mobileconfig and DDM .json files referenced in `custom_settings`
+- Always validate profiles before adding them to GitOps YAML
+
+Don't assume tools are installed — always check first.
 
 ## Step 2: Core Rules (Always Enforce)
 

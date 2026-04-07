@@ -1,5 +1,6 @@
 ---
-description: "Expert at creating and validating Apple DDM declaration JSON files for Fleet GitOps."
+name: ddm-declaration
+description: "Expert at creating and validating Apple DDM declaration JSON files for Fleet GitOps. Use when working with Declarative Device Management, DDM declarations, or Fleet declarative profiles."
 ---
 
 # Apple DDM Declaration Profile Skill
@@ -112,3 +113,91 @@ Fleet differentiates by file content (JSON = DDM, XML = .mobileconfig), not by c
 After every session, update `learnings.md`:
 - **Failures** → new Rule entry (what broke, fix, when to check)
 - **Successes** → new Observation entry (what worked, when to reuse)
+
+---
+
+## Failure Patterns
+
+Observable warning signs that indicate problems:
+
+| Pattern | Why It's Wrong | Fix |
+|---------|----------------|-----|
+| `ServerToken` included in JSON | Fleet generates this automatically | Remove the `ServerToken` key entirely |
+| Type doesn't start with `com.apple.configuration.` | Fleet only accepts configuration types | Use a valid configuration type or switch to .mobileconfig |
+| Forbidden type (e.g., `account.mail`) | Requires asset references Fleet doesn't support | Use .mobileconfig instead or remove asset dependency |
+| `softwareupdate.enforcement.specific` without flag | Restricted type, requires feature flag | Enable `allowCustomOSUpdatesAndFileVault` or use settings type |
+| Identifier over 64 bytes | DDM spec limit | Shorten to ≤64 UTF-8 bytes |
+| snake_case or camelCase payload keys | DDM uses PascalCase | Use `RequireAlphanumericPasscode` not `require_alphanumeric_passcode` |
+| Invalid JSON syntax | JSON parser fails | Fix syntax errors (missing commas, quotes, brackets) |
+| Duplicate Identifier across declarations | Fleet rejects duplicate identifiers | Make each Identifier unique per team/fleet |
+| Type typo (e.g., `com.apple.config.passcode`) | Wrong namespace | Use `com.apple.configuration.passcode.settings` |
+| Empty Payload object `{}` | No settings configured | Add actual payload keys or remove declaration |
+
+**Common slip-ups:**
+- Copying ServerToken from Fleet UI export (it changes on every edit)
+- Using .mobileconfig PayloadTypes instead of DDM Types
+- Forgetting DDM uses combine semantics (multiple declarations merge)
+- Using restricted types without understanding Fleet's limitations
+
+---
+
+## Standard Verification
+
+**Validation order** (run in this sequence):
+
+### 1. contour validation (optional, if available)
+```bash
+# Check if contour is installed
+command -v contour >/dev/null 2>&1 && contour ddm validate <file>.json
+```
+
+**What contour DDM validation catches:**
+- Invalid Type (not in Apple's 42 DDM types)
+- Forbidden types (the 12 blocked configuration types)
+- Missing required top-level keys (Type, Identifier, Payload)
+- ServerToken present (should be auto-generated)
+- Payload key validation against Apple schemas
+- PascalCase violations in payload keys
+- Identifier length violations (>64 bytes)
+
+**If contour catches issues, fix them before proceeding to jq.**
+
+### 2. JSON well-formedness check (REQUIRED)
+```bash
+# Validate JSON syntax
+jq empty <file>.json 2>&1
+```
+
+**What jq catches:**
+- Malformed JSON (missing commas, quotes, brackets)
+- Invalid escape sequences
+- Trailing commas (not allowed in strict JSON)
+- UTF-8 encoding issues
+
+**jq must pass before proceeding to manual checks.**
+
+### 3. Manual skill checklist
+
+After validation passes, verify:
+
+- [ ] **Valid Type**: Starts with `com.apple.configuration.` (e.g., `com.apple.configuration.passcode.settings`)
+- [ ] **Not forbidden**: Type is NOT one of the 12 forbidden configuration types requiring assets
+- [ ] **Not restricted**: If using `softwareupdate.enforcement.specific`, confirm `allowCustomOSUpdatesAndFileVault` is enabled
+- [ ] **Identifier format**: Reverse-DNS format (e.g., `com.fleetdm.config.passcode-settings`)
+- [ ] **Identifier length**: ≤64 UTF-8 bytes
+- [ ] **Identifier uniqueness**: Not used by another declaration in the same team/fleet
+- [ ] **No ServerToken**: File does NOT contain `ServerToken` key
+- [ ] **Payload present**: `Payload` object exists and is not empty `{}`
+- [ ] **PascalCase keys**: All payload keys use PascalCase (e.g., `RequireAlphanumericPasscode`)
+- [ ] **Valid payload keys**: Keys match Apple's schema for that Type (check `references/<type>.yaml`)
+- [ ] **Correct data types**: String/number/boolean/array types match schema requirements
+
+### 4. Production readiness
+
+- [ ] Tested on macOS 14+/iOS 17+/iPadOS 17+ device via Fleet MDM
+- [ ] Understand combine semantics (if multiple declarations of same Type exist)
+- [ ] File placed in `platforms/{macos|ios|ipados}/declaration-profiles/` directory
+- [ ] Descriptive filename with `.json` extension (e.g., "Passcode settings.json")
+- [ ] Added to `custom_settings` list in Fleet GitOps YAML
+- [ ] Label targeting configured if needed (`labels_include_any`, etc.)
+- [ ] Documented purpose in comments or team README

@@ -1,5 +1,6 @@
 ---
-description: "Expert at using and scripting against the Fleet REST API for device management automation."
+name: fleet-api
+description: "Expert at using and scripting against the Fleet REST API for device management automation. Use when asked to call Fleet API endpoints, use fleetctl CLI, or build Fleet integrations."
 ---
 
 # Fleet REST API Skill
@@ -18,6 +19,30 @@ Expert at using and scripting against the Fleet REST API for device management a
 
 Before starting, read these for accumulated knowledge:
 - Read `learnings.md` — known gotchas and patterns from prior sessions
+
+### Optional: Check for fleetctl CLI
+
+If `fleetctl` is installed, prefer it for common operations over raw API calls:
+
+```bash
+# Check if fleetctl is available
+command -v fleetctl >/dev/null 2>&1 && echo "fleetctl available"
+
+# Quick reference
+fleetctl get hosts                    # List hosts
+fleetctl get queries                  # List queries
+fleetctl get packs                    # List query packs
+fleetctl apply -f <file>.yaml         # Apply GitOps YAML
+fleetctl login --email user@example.com  # Authenticate
+```
+
+For detailed command help: `fleetctl <command> --help`
+
+**When to use fleetctl vs raw API:**
+- Use `fleetctl` for: GitOps apply, bulk operations, authentication, common queries
+- Use raw API for: Webhooks, integrations, custom automation, specific endpoints not in fleetctl
+
+Don't assume fleetctl is installed — always check first with `command -v fleetctl`.
 
 ## Step 2: Core Rules (Always Enforce)
 

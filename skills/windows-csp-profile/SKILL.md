@@ -1,5 +1,6 @@
 ---
-description: "Expert at creating and validating Windows CSP profile XML files for Fleet GitOps."
+name: windows-csp-profile
+description: "Expert at creating and validating Windows CSP profile XML files for Fleet GitOps. Use when working with Windows MDM, SyncML, or Fleet Windows profiles."
 ---
 
 # Windows CSP Profile (SyncML) Skill
@@ -116,3 +117,88 @@ Label targeting supports: `labels_include_all`, `labels_include_any`, `labels_ex
 After every session, update `learnings.md`:
 - **Failures** → new Rule entry (what broke, fix, when to check)
 - **Successes** → new Observation entry (what worked, when to reuse)
+
+---
+
+## Failure Patterns
+
+Observable warning signs that indicate problems:
+
+| Pattern | Why It's Wrong | Fix |
+|---------|----------------|-----|
+| `<?xml version="1.0"?>` present | Fleet classifies as macOS profile | Remove XML declaration entirely |
+| `<SyncML>` or `<SyncBody>` wrapper | Fleet wraps fragments itself | Remove envelope, start with `<Replace>` or `<Add>` |
+| `<Atomic>` with other top-level elements | Atomic must be sole top-level element | Move everything inside `<Atomic>` or remove it |
+| `<Delete>` anywhere | Not supported by Fleet | Remove `<Delete>` commands |
+| Processing instruction `<?target?>` | Forbidden by Fleet validator | Remove all processing instructions |
+| Missing `xmlns="syncml:metinf"` in `<Format>` | Validation fails | Add namespace: `<Format xmlns="syncml:metinf">int</Format>` |
+| Wrong data type (`chr` vs `int`) | CSP rejects value | Check Microsoft CSP docs for exact type |
+| Trailing slash in LocURI | Path matching may fail | Remove: `./Device/.../Setting` not `.../Setting/` |
+| Reserved LocURI used | Conflicts with Fleet built-ins | Use Fleet's UI settings or avoid reserved paths |
+| Incorrect case in OMA-URI | Paths are case-sensitive | Match exact case from Microsoft docs |
+
+**Common slip-ups:**
+- Copying full SyncML examples from Microsoft docs (they include envelope)
+- Using `<Delete>` inside `<Atomic>` (forbidden)
+- Forgetting the `syncml:metinf` namespace on `<Format>`
+- Using BitLocker or Update LocURIs instead of Fleet's built-in settings
+
+---
+
+## Standard Verification
+
+**Validation order** (run in this sequence):
+
+### 1. XML well-formedness check
+```bash
+# Use xmllint to check basic XML structure
+xmllint --noout <file>.xml 2>&1
+```
+
+**What xmllint catches:**
+- Malformed XML tags
+- Unclosed elements
+- Invalid character encoding
+- Namespace errors
+
+**xmllint must pass before proceeding.**
+
+### 2. Fleet validator (if available)
+```bash
+# Fleet's built-in Windows profile validator (if you have Fleet locally)
+# This runs the same checks Fleet server does
+./scripts/validate-windows-profile.sh <file>.xml
+```
+
+**What Fleet validator catches:**
+- XML declaration present
+- SyncML envelope present
+- Invalid top-level elements
+- `<Delete>` commands
+- Processing instructions
+- Atomic rule violations
+
+### 3. Manual skill checklist
+
+After validation passes, verify:
+
+- [ ] **No XML declaration**: File does NOT start with `<?xml version="1.0"?>`
+- [ ] **No SyncML envelope**: No `<SyncML>`, `<SyncHdr>`, or `<SyncBody>` wrappers
+- [ ] **Valid top-level elements**: Only `<Replace>`, `<Add>`, `<Atomic>`, or `<Exec>`
+- [ ] **Atomic isolation**: If `<Atomic>` present, it's the ONLY top-level element
+- [ ] **No Delete commands**: No `<Delete>` anywhere in the file
+- [ ] **Format namespace**: All `<Format>` tags include `xmlns="syncml:metinf"`
+- [ ] **Correct data types**: `<Format>` type matches CSP requirements (int/bool/chr/xml)
+- [ ] **Valid LocURIs**: All paths start with `./Device/Vendor/MSFT/` or `./User/Vendor/MSFT/`
+- [ ] **No reserved paths**: Not using BitLocker or Update LocURIs (unless intentional override)
+- [ ] **Case-sensitive paths**: OMA-URI paths match exact case from Microsoft CSP docs
+- [ ] **No trailing slashes**: LocURI paths don't end with `/`
+
+### 4. Production readiness
+
+- [ ] Tested on Windows test device via Fleet MDM
+- [ ] Fleet variable substitution tested if used (`$FLEET_VAR_*`)
+- [ ] Label targeting configured correctly in Fleet GitOps YAML
+- [ ] File placed in `platforms/windows/configuration-profiles/` directory
+- [ ] Descriptive filename (e.g., "Enable Windows Firewall.xml")
+- [ ] Documented purpose in Fleet GitOps comments or team README
