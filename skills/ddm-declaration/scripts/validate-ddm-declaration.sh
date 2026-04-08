@@ -1,5 +1,9 @@
 #!/bin/bash
-# Validate a DDM declaration JSON file for Fleet compatibility
+# DEPRECATED — Use contour instead:
+#   contour profile ddm validate <file>.json
+# contour validates against all 42+ Apple DDM schemas, checks forbidden types,
+# and enforces PascalCase keys. This script is kept for environments without contour.
+#
 # Usage: ./validate-ddm-declaration.sh <file.json>
 
 set -euo pipefail

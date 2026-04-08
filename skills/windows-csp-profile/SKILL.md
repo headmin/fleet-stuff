@@ -124,7 +124,14 @@ Label targeting supports: `labels_include_all`, `labels_include_any`, `labels_ex
 xmllint --noout <file>.xml 2>&1
 ```
 
-### 2. Manual checklist
+### 2. Fleet SyncML validation (optional)
+```bash
+# Checks: no XML declaration, no SyncML envelope, valid top-level elements,
+# atomic rules, reserved LocURIs, LocURI format
+scripts/validate-windows-profile.sh <file>.xml
+```
+
+### 3. Manual checklist
 - [ ] No XML declaration (`<?xml ...?>`)
 - [ ] No SyncML envelope (`<SyncML>`, `<SyncBody>`)
 - [ ] Valid top-level elements only (`<Replace>`, `<Add>`, `<Atomic>`, `<Exec>`)

@@ -1,5 +1,9 @@
 #!/bin/bash
-# Quick mobileconfig validation script
+# DEPRECATED — Use contour instead:
+#   contour profile validate <file>.mobileconfig
+# contour provides full Apple schema validation, deprecated type detection,
+# and convention checks. This script is kept for environments without contour.
+#
 # Usage: ./validate-profile.sh <file.mobileconfig>
 
 set -euo pipefail

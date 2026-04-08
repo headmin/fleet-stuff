@@ -1,8 +1,8 @@
 #!/bin/bash
-# validate-gitops-yaml.sh
-#
-# Validates Fleet GitOps YAML files for common structural errors.
-# Catches missing required keys, scope violations, and label consistency issues.
+# DEPRECATED — Use fleetctl instead:
+#   fleetctl apply -f <file>.yml --dry-run
+# fleetctl validates YAML structure, schema, scope rules, and label consistency
+# against the actual Fleet server. This script is kept for environments without fleetctl.
 #
 # Usage: ./validate-gitops-yaml.sh <file.yml> [--type default|fleet|unassigned]
 #
