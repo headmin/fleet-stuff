@@ -132,6 +132,12 @@ Observations from real-world Fleet GitOps authoring. Update this file as new pat
 **Fix**: You no longer need to explicitly set it unless you want to disable it.
 **How to apply**: Safe to omit from config; it defaults to enabled.
 
+### Rule #22: FLEET_MDM_ALLOW_ALL_DECLARATIONS (v4.83+)
+
+**What changed**: v4.83 added `FLEET_MDM_ALLOW_ALL_DECLARATIONS` server flag (#38366). When enabled, bypasses all DDM type restrictions — the 12 forbidden types (account.mail, security.certificate, etc.), activations, assets, and management declarations are all accepted. Default behavior unchanged (forbidden types still blocked).
+**Fix**: Self-hosted users set the env var. Cloud customers must request Fleet enable it. Follow-up #38986 plans to allow all types by default.
+**How to apply**: If a user's DDM declaration is rejected with "Only configuration declarations that don't require an asset reference are supported" and they genuinely need that type, suggest this flag. Otherwise, keep using .mobileconfig as a fallback.
+
 ---
 
 ## Observations (Soft Learnings)

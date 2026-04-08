@@ -19,6 +19,9 @@ As of Fleet 4.82 (Mar 2026):
 - `fleetctl generate-gitops` outputs `fleet_maintained_apps` in a dedicated YAML section
 - Software fields `self_service`, `labels_include_any`, `labels_exclude_any`, `categories`, `setup_experience` are now at **fleet level** (not package level)
 
+As of Fleet 4.83:
+- **`FLEET_MDM_ALLOW_ALL_DECLARATIONS`** — server flag that bypasses all DDM type restrictions. When enabled, forbidden types (account.mail, security.certificate, etc.), activations, assets, and management declarations are all accepted in `custom_settings`. Default: disabled (12 types still blocked). Cloud customers must request Fleet enable it. Follow-up #38986 plans to allow all types by default.
+
 ### Required top-level keys
 Every YAML file needs ALL required keys. Missing or misspelled keys **silently reset to defaults or delete resources**.
 

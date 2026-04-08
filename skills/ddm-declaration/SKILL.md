@@ -28,13 +28,16 @@ Every declaration JSON needs exactly three user-provided keys:
 ### Do NOT include ServerToken
 Fleet generates `ServerToken` automatically from a hash of the JSON contents. Including it causes issues.
 
-### Forbidden declaration types
-These 12 configuration types are blocked (require asset references Fleet doesn't support):
+### Forbidden declaration types (default behavior)
+These 12 configuration types are blocked by default (require asset references):
 `account.caldav`, `account.carddav`, `account.exchange`, `account.google`, `account.ldap`, `account.mail`, `screensharing.connection`, `security.certificate`, `security.identity`, `security.passkey.attestation`, `services.configuration-files`, `watch.enrollment`
+
+**Fleet 4.83+ override**: Setting `FLEET_MDM_ALLOW_ALL_DECLARATIONS` bypasses all type restrictions — including forbidden types, activations, assets, and management declarations. Cloud customers must request Fleet enable this flag. See #38366. A follow-up (#38986) plans to enable all types by default without the flag.
 
 ### Restricted types
 - `softwareupdate.enforcement.specific` — blocked unless `allowCustomOSUpdatesAndFileVault` is enabled
 - `management.status-subscriptions` — always blocked (use queries/policies instead)
+- Both restrictions are also bypassed by `FLEET_MDM_ALLOW_ALL_DECLARATIONS`
 
 ### Identifier format
 - Max 64 bytes (UTF-8 octets)
@@ -112,7 +115,7 @@ Fleet differentiates by file content (JSON = DDM, XML = .mobileconfig), not by c
 |---------|----------------|-----|
 | `ServerToken` in JSON | Fleet generates this automatically | Remove the key entirely |
 | Type without `com.apple.configuration.` prefix | Fleet rejects non-configuration types | Use correct prefix |
-| Forbidden type (e.g., `account.mail`) | Requires asset references | Use .mobileconfig instead |
+| Forbidden type (e.g., `account.mail`) | Requires asset references (default) | Use .mobileconfig, or enable `FLEET_MDM_ALLOW_ALL_DECLARATIONS` (4.83+) |
 | `softwareupdate.enforcement.specific` without flag | Restricted type | Enable `allowCustomOSUpdatesAndFileVault` |
 | Identifier over 64 bytes | DDM spec limit | Shorten identifier |
 | snake_case or camelCase payload keys | DDM uses PascalCase | Use `RequireAlphanumericPasscode` |
