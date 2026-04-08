@@ -1,50 +1,15 @@
 ---
 name: fleet-api
-description: "Expert at using and scripting against the Fleet REST API for device management automation. Use when asked to call Fleet API endpoints, use fleetctl CLI, or build Fleet integrations."
+description: Help with the Fleet REST API and fleetctl CLI — scripting, automation, and integration for device management including hosts, policies, software, profiles, and MDM commands.
+allowed-tools: Read, Grep, Glob, Edit, Write, Bash, WebFetch
+effort: high
 ---
 
-# Fleet REST API Skill
+You are helping with Fleet REST API usage and automation: $ARGUMENTS
 
-Expert at using and scripting against the Fleet REST API for device management automation.
+Apply the following constraints for all work.
 
-## When to Activate
-
-- User asks to call, script, or automate Fleet API endpoints
-- Mentions `fleetctl`, Fleet API, or Fleet REST API
-- Wants to manage hosts, policies, software, profiles, or labels via API
-- Asks about API authentication, pagination, or error handling
-- Needs to build integrations or webhooks with Fleet
-
-## Step 1: Read Context
-
-Before starting, read these for accumulated knowledge:
-- Read `learnings.md` — known gotchas and patterns from prior sessions
-
-### Optional: Check for fleetctl CLI
-
-If `fleetctl` is installed, prefer it for common operations over raw API calls:
-
-```bash
-# Check if fleetctl is available
-command -v fleetctl >/dev/null 2>&1 && echo "fleetctl available"
-
-# Quick reference
-fleetctl get hosts                    # List hosts
-fleetctl get queries                  # List queries
-fleetctl get packs                    # List query packs
-fleetctl apply -f <file>.yaml         # Apply GitOps YAML
-fleetctl login --email user@example.com  # Authenticate
-```
-
-For detailed command help: `fleetctl <command> --help`
-
-**When to use fleetctl vs raw API:**
-- Use `fleetctl` for: GitOps apply, bulk operations, authentication, common queries
-- Use raw API for: Webhooks, integrations, custom automation, specific endpoints not in fleetctl
-
-Don't assume fleetctl is installed — always check first with `command -v fleetctl`.
-
-## Step 2: Core Rules (Always Enforce)
+## Core Rules
 
 ### Authentication
 - All requests require `Authorization: Bearer <token>` header
@@ -58,9 +23,6 @@ All endpoints follow: `<fleet-url>/api/v1/fleet/<resource>`
 ### Pagination
 Most list endpoints support: `page`, `per_page`, `order_key`, `order_direction` (asc/desc)
 
-### Request body limit
-Default 1MiB (`FLEET_SERVER_DEFAULT_MAX_REQUEST_BODY_SIZE`), unless endpoint specifies otherwise.
-
 ### Error format
 ```json
 {
@@ -70,15 +32,38 @@ Default 1MiB (`FLEET_SERVER_DEFAULT_MAX_REQUEST_BODY_SIZE`), unless endpoint spe
 }
 ```
 
-## Step 3: Look Up Endpoints As Needed
+### Dangerous endpoints (confirm before using)
+These are destructive and irreversible — always confirm with the user:
+- `POST /api/v1/fleet/hosts/delete` — Batch-deletes hosts
+- `DELETE /api/v1/fleet/hosts/:id` — Deletes a single host
+- `POST /api/v1/fleet/hosts/:id/wipe` — Factory-wipes a device
+- `POST /api/v1/fleet/hosts/:id/lock` — Locks a device
+- `DELETE /api/v1/fleet/fleets/:id` — Deletes a fleet
 
-Read `references/endpoint-index.md` — it contains all endpoints grouped by domain (Hosts, Software, Policies, OS Settings, Fleets, Labels, Users, Config, Scripts, Commands, etc.). Find the relevant section for the user's request.
+## fleetctl CLI (if available)
 
-### External reference
-- Full API docs (canonical): https://fleetdm.com/docs/rest-api/rest-api
-- Fleet tables (osquery): https://fleetdm.com/tables
+```bash
+command -v fleetctl >/dev/null 2>&1 && echo "fleetctl available"
 
-## Step 4: Build the Request
+fleetctl get hosts                    # List hosts
+fleetctl get queries                  # List queries
+fleetctl apply -f <file>.yaml         # Apply GitOps YAML
+fleetctl api get /api/v1/fleet/hosts  # Raw API via fleetctl
+```
+
+**When to use fleetctl vs raw API:**
+- `fleetctl` for: GitOps apply, bulk operations, authentication, common queries
+- Raw API for: webhooks, integrations, custom automation, endpoints not in fleetctl
+
+Don't assume fleetctl is installed — always check first.
+
+## Local References
+
+Before starting, read `learnings.md` for accumulated knowledge from prior sessions.
+
+Read `references/endpoint-index.md` for all endpoints grouped by domain (Hosts, Software, Policies, OS Settings, Fleets, Labels, Users, Config, Scripts, Commands).
+
+## Common Patterns
 
 ### Using curl
 ```bash
@@ -86,42 +71,54 @@ curl -s -H "Authorization: Bearer $FLEET_API_TOKEN" \
   "https://fleet.example.com/api/v1/fleet/hosts?per_page=10"
 ```
 
-### Using fleetctl
-```bash
-fleetctl api get /api/v1/fleet/hosts --query per_page=10
-```
-
-### Common patterns
+### Key patterns
 1. **List + filter**: Most list endpoints accept `query`, `fleet_id`, `label_id`, `platform`
-2. **By ID vs identifier**: Hosts can be fetched by ID (`/hosts/:id`) or identifier (`/hosts/identifier/:identifier` where identifier is hostname, UUID, or serial)
-3. **Batch operations**: Use `POST /api/v1/fleet/hosts/delete` (body with IDs) instead of deleting one-by-one
+2. **By ID vs identifier**: Hosts via `GET /hosts/:id` or `GET /hosts/identifier/:identifier` (hostname, UUID, or serial)
+3. **Batch operations**: Use `POST /hosts/delete` with IDs, not one-by-one
 4. **Async operations**: Lock, wipe, MDM commands are queued — check status via activities endpoint
+5. **Profile uploads**: Use `multipart/form-data`, not JSON
+6. **Populate flags**: `?populate_software=true&populate_policies=true` reduces API calls
 
-### Dangerous endpoints (confirm before using)
-These endpoints are destructive and irreversible. Always confirm intent with the user before scripting them:
-- `POST /api/v1/fleet/hosts/delete` — Batch-deletes hosts (removes ALL data for those hosts)
-- `DELETE /api/v1/fleet/hosts/:id` — Deletes a single host
-- `POST /api/v1/fleet/hosts/:id/wipe` — Factory-wipes a device
-- `POST /api/v1/fleet/hosts/:id/lock` — Locks a device (PIN required to unlock)
-- `DELETE /api/v1/fleet/fleets/:id` — Deletes a fleet and moves hosts to Unassigned
+## Keeping the Index Current
 
-## Step 5: Validate & Test
+The endpoint index can go stale as Fleet releases new versions:
+- `scripts/update-endpoint-index.sh` — Regenerate from latest API docs
+- `scripts/validate-endpoints.sh` — Probe a live Fleet instance for changes
 
-- Use `--dry-run` flag with `fleetctl gitops` for config changes
-- Check response status codes: 200 (success), 201 (created), 204 (deleted), 4xx (client error), 5xx (server error)
-- For profile uploads, use `multipart/form-data` not JSON
+Run `update-endpoint-index.sh` when an endpoint returns 404.
 
-## Step 6: Keep Index Current
+---
 
-The endpoint index can go stale as Fleet releases new versions. Use the scripts to update:
+## Failure Patterns
 
-- `scripts/update-endpoint-index.sh` — Regenerate index from latest API docs (fetches from GitHub or local file)
-- `scripts/validate-endpoints.sh` — Probe a live Fleet instance for removed/changed endpoints
+| Pattern | Why It's Wrong | Fix |
+|---------|----------------|-----|
+| Profile upload as JSON body | 400 error | Use `multipart/form-data` (`curl -F`) |
+| SSO user calling `/fleet/login` | 401 error | Get token from Fleet UI instead |
+| `DELETE /hosts` for bulk delete | Endpoint doesn't exist | Use `POST /hosts/delete` with `{"ids": [...]}` |
+| Expecting sync lock/wipe response | Commands are async | Poll activities endpoint for status |
+| Global endpoint for fleet policy | Wrong scope | Use `/fleets/:id/policies` for fleet-scoped |
+| Only using numeric ID for hosts | Missing flexible lookup | Use `/hosts/identifier/:identifier` for serial/UUID |
+| Using `teams`/`queries` in API | Deprecated in v4.82+ | Use `fleets`/`reports` field names |
 
-Run `update-endpoint-index.sh` when working with a newer Fleet version or when an endpoint returns 404.
+---
 
-## Step 7: Capture Learnings
+## Standard Verification
+
+- Use `--dry-run` with `fleetctl gitops` for config changes
+- Check response codes: 200 (success), 201 (created), 204 (deleted), 4xx (client), 5xx (server)
+- For profile uploads, verify `Content-Type: multipart/form-data`
+
+---
+
+## Capture Learnings
 
 After every session, update `learnings.md`:
 - **Failures** → new Rule entry (what broke, fix, when to check)
 - **Successes** → new Observation entry (what worked, when to reuse)
+
+## References
+
+- Fleet API documentation (canonical): https://fleetdm.com/docs/rest-api/rest-api
+- Fleet tables (osquery): https://fleetdm.com/tables
+- Fleet GitOps documentation: https://fleetdm.com/docs/configuration/yaml-files
