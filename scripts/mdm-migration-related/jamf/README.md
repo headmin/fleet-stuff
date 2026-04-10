@@ -17,12 +17,19 @@ jamf-cli pro backup --output ./backup --resources scripts
 
 ### 2. Run the extractor
 
+See scripts next to this ReadMe or use the compiled, notarized, codesigned binary [here](extract-scripts-go/extract-scripts)
+
 ```bash
 # Pure shell (no dependencies)
 ./extract-scripts.sh ./backup/scripts ./extracted
 
 # Or with Python/PyYAML fallback
 ./extract-scripts-py.sh ./backup/scripts ./extracted
+
+# Or the compiled, signed, notarized binary
+
+./extract-scripts ./backup/scripts ./extracted
+
 ```
 
 Both arguments are optional — defaults to the current directory for input and `./extracted` for output.
